@@ -24,9 +24,7 @@ private readonly Func<int> _getHash;
 public int GetHash() => _getHash();
 ```
 
-Both approaches carry overhead on **every single call**. The branch or delegate indirection can never be eliminated by the JIT because the choice is expressed as a runtime condition that could theoretically change.
-
-The deeper problem is that the *choice* is almost always made **once** — at construction time, config load, or startup — but the cost is paid on every hot-path invocation.
+Both approaches carry overhead on **every single call**. The branch or delegate indirection can never be eliminated by the JIT because the choice is expressed as a runtime condition, even when that condition is effectively fixed for the lifetime of the process.
 
 ---
 
@@ -54,7 +52,7 @@ Measured on N=1000 with BenchmarkDotNet:
 | MethodADirect      | 1.229 µs | Baseline — calling the method directly     |
 | MethodCJigSaw      | 1.307 µs | System-selected best implementation        |
 
-`MethodAJigSaw` is on par with `MethodADirect` — the JIT sees the same code.
+`MethodAJigSaw` lands on par with `MethodADirect` — the JIT sees identical code.
 
 ---
 
@@ -108,60 +106,71 @@ public abstract class Hasher
 
 ### 2. Assemble and instantiate
 
-**Explicit selection** — you know which implementation you want:
+**Assemble the `Type` only** — useful when you manage instantiation yourself:
 
 ```csharp
-// Assemble the type
-var hasherType = Assembler.Assemble<Hasher>(new Dictionary<string, string>
+Type hasherType = Assembler.Assemble<Hasher>(new Dictionary<string, string>
 {
     ["Algorithm"] = "Polynomial"
 });
 var hasher = (Hasher)Activator.CreateInstance(hasherType, data)!;
+```
 
-// Or in one step
+**Assemble and create in one step:**
+
+```csharp
 var hasher = Assembler.CreateInstance<Hasher>(new Dictionary<string, string>
 {
     ["Algorithm"] = "Polynomial"
 }, data);
 ```
 
-**Fluent API** — cleaner for multiple keys:
-
-```csharp
-var hasher = Assembler.For<Hasher>()
-    .With("Algorithm", "Polynomial")
-    .CreateInstance(data);
-```
-
-**System-tuned selection** — let JigSaw profile every candidate on the executing hardware and pick the fastest:
+**System-tuned selection** — JigSaw profiles every candidate on the executing hardware and returns the fastest instance:
 
 ```csharp
 var hasher = Assembler.CreateInstanceForSystem<Hasher>(
-    getArgsFor: method => [],      // ComputeHash takes no arguments
-    mapping:    [],                // no pinned constraints — try everything
+    getArgsFor:      method => [],   // ComputeHash() takes no arguments
+    bestCombination: out var winner,
     constructorArgs: [data]);
 
-// Or pin some dimensions and let the rest be auto-selected
-var hasher = Assembler.For<Hasher>()
-    .With("Category", "Cryptographic")   // pinned
-    .CreateInstanceForSystem(            // Algorithm auto-selected
-        getArgsFor: method => [],
-        constructorArgs: [data]);
+Console.WriteLine($"Selected: {string.Join(", ", winner.Select(kv => $"{kv.Key}={kv.Value}"))}");
+// Selected: Algorithm=Span
 ```
 
-`CreateInstanceForSystem` also reports which combination won:
+**System-tuned with a pinned constraint** — fix some keys and let JigSaw choose the rest:
+
+```csharp
+var hasher = Assembler.CreateInstanceForSystem<Hasher>(
+    getArgsFor:      method => [],
+    mapping:         new Dictionary<string, string> { ["Category"] = "Cryptographic" },
+    bestCombination: out var winner,
+    constructorArgs: [data]);
+```
+
+**System-tuned with explicit warmup and iteration control:**
 
 ```csharp
 var hasher = Assembler.CreateInstanceForSystem<Hasher>(
     getArgsFor:      method => [],
     mapping:         [],
-    warmup:          200,
-    iterations:      2_000,
+    warmup:          500,
+    iterations:      5_000,
     bestCombination: out var winner,
     constructorArgs: [data]);
+```
 
-Console.WriteLine($"Best: {string.Join(", ", winner.Select(kv => $"{kv.Key}={kv.Value}"))}");
-// Best: Algorithm=Span
+If a `[PuzzlePlace]` method takes arguments, provide them via `getArgsFor`:
+
+```csharp
+var hasher = Assembler.CreateInstanceForSystem<Hasher>(
+    getArgsFor: method => method.Name switch
+    {
+        nameof(Hasher.ComputeHash)   => [],
+        nameof(Hasher.TransformData) => [sampleInput],
+        _                            => []
+    },
+    bestCombination: out _,
+    constructorArgs: [data]);
 ```
 
 ---
@@ -170,13 +179,13 @@ Console.WriteLine($"Best: {string.Join(", ", winner.Select(kv => $"{kv.Key}={kv.
 
 ### System-specific optimisation
 
-SIMD instruction availability, cache sizes, and memory bandwidth vary across hardware. An implementation that wins on a developer workstation may lose on a cloud VM. `CreateInstanceForSystem` profiles at process startup on the actual executing hardware and selects accordingly — no configuration required.
+SIMD availability, cache sizes, and memory bandwidth vary across hardware. An implementation that wins on a developer workstation may lose on a cloud VM. `CreateInstanceForSystem` profiles at process startup on the actual hardware and selects accordingly — no configuration required.
 
 ```csharp
-// At startup — paid once
+// At startup — profiled and assembled once
 _compressor = Assembler.CreateInstanceForSystem<Compressor>(
     getArgsFor:      m => [samplePayload],
-    mapping:         [],
+    bestCombination: out _,
     constructorArgs: [config]);
 
 // In the hot path — zero dispatch cost
@@ -185,37 +194,40 @@ _compressor.Compress(buffer);
 
 ### User or configuration preferences
 
-When the choice is driven by user settings or a config file, the mapping is known at startup and fixed for the process lifetime. JigSaw assembles the right type once and eliminates all subsequent branching:
+When the choice is driven by a config file or user settings, it is known at startup and fixed for the process lifetime. JigSaw assembles the right type once and eliminates all subsequent branching:
 
 ```csharp
-var serializer = Assembler.For<Serializer>()
-    .With("Format",      config["format"])        // "Json" or "MessagePack"
-    .With("Compression", config["compression"])   // "None" or "Brotli"
-    .CreateInstance();
+var serializer = Assembler.CreateInstance<Serializer>(new Dictionary<string, string>
+{
+    ["Format"]      = config["format"],       // "Json" or "MessagePack"
+    ["Compression"] = config["compression"]   // "None" or "Brotli"
+});
 ```
 
-Without JigSaw, each call to `Serialize()` would evaluate these conditions. With JigSaw, the resulting type *is* the chosen combination — the conditions no longer exist in the call path.
+Every call to `Serialize()` thereafter is a direct method call with no conditional logic in the path.
 
 ### Eliminating delegate indirection
 
 Storing `Func<T>` fields to avoid switch statements trades branch cost for indirect call cost. JigSaw eliminates both:
 
 ```csharp
-// Before — delegate stored at construction, called indirectly forever
+// Before — indirect call on every invocation
 private readonly Func<int> _hash;
-public int GetHash() => _hash();   // indirect call on every invocation
+public int GetHash() => _hash();
 
-// After — JigSaw wires the implementation directly into the vtable slot
-public abstract int GetHash();     // filled once at startup, direct call forever
+// After — implementation wired directly into the vtable slot at startup
+[PuzzlePlace(nameof(GetHash))]
+public abstract int GetHash();
 ```
 
 ### Feature flags
 
 ```csharp
-var pipeline = Assembler.For<Pipeline>()
-    .With("Logging",    flags["logging"]    ? "Enabled"  : "Disabled")
-    .With("Validation", flags["validation"] ? "Strict"   : "Relaxed")
-    .CreateInstance(config);
+var pipeline = Assembler.CreateInstance<Pipeline>(new Dictionary<string, string>
+{
+    ["Logging"]    = flags.Logging    ? "Enabled"  : "Disabled",
+    ["Validation"] = flags.Validation ? "Strict"   : "Relaxed"
+});
 ```
 
 ---
@@ -227,8 +239,8 @@ var pipeline = Assembler.For<Pipeline>()
 | Base type must be `abstract` | JigSaw extends it with a sealed concrete subclass |
 | `[PuzzlePlace]` must be on an `abstract` method | Non-abstract placement throws at assembly time |
 | Exactly one `[PuzzlePeice]` must match per place | Zero or multiple matches throw at assembly time |
-| Pieces must share the declaring type, return type, and parameter types with their place | Mismatched signatures are silently skipped |
-| Assembly is cached | The same type + mapping combination is only built once |
+| Pieces must share the declaring type, return type, and parameter types with their place | Mismatched signatures are silently skipped as non-candidates |
+| Assembly is cached | The same type + mapping combination is only built once per process |
 
 ---
 
@@ -264,8 +276,8 @@ Place: ComputeHash
 1. **Reflection scan** — JigSaw reads `[PuzzlePlace]` and `[PuzzlePeice]` attributes on the base type and resolves which piece fills each place for the given mapping.
 2. **Type emission** — A sealed subclass is built with `TypeBuilder`. Constructors are mirrored from the base class so all existing construction patterns continue to work.
 3. **IL copy** — Rather than emitting a forwarding call, JigSaw copies the raw IL byte stream of the chosen piece directly into the override method, resolving all metadata tokens (methods, fields, types, strings, branches) into the new module. The JIT sees the body as local code and can inline freely.
-4. **Access grants** — The dynamic assembly is granted `IgnoresAccessChecksTo` for the originating assembly so that private and internal members accessed by the copied IL remain accessible.
-5. **Cache** — The assembled `Type` is stored in a static dictionary keyed on `FullName + mapping hash`. Repeated calls with the same mapping return the cached type instantly.
+4. **Access grants** — The dynamic assembly declares `IgnoresAccessChecksTo` for the originating assembly so that private and internal members accessed by the copied IL remain accessible.
+5. **Cache** — The assembled `Type` is stored keyed on `FullName + mapping hash`. Repeated calls with the same mapping return the cached type instantly.
 
 ---
 
@@ -281,6 +293,12 @@ T Assembler.CreateInstance<T>(Dictionary<string, string> mapping, params object?
 // Profile all combinations and return the fastest instance
 T Assembler.CreateInstanceForSystem<T>(
     Func<MethodInfo, object?[]?> getArgsFor,
+    out Dictionary<string, string> bestCombination,
+    params object?[]? constructorArgs)
+
+// Profile with some keys pinned as constraints
+T Assembler.CreateInstanceForSystem<T>(
+    Func<MethodInfo, object?[]?> getArgsFor,
     Dictionary<string, string>   mapping,
     out Dictionary<string, string> bestCombination,
     params object?[]? constructorArgs)
@@ -294,10 +312,7 @@ T Assembler.CreateInstanceForSystem<T>(
     out Dictionary<string, string> bestCombination,
     params object?[]? constructorArgs)
 
-// Fluent builder entry point
-AssemblerConfig<T> Assembler.For<T>()
-
-// Introspect available places and pieces
+// Introspect available places and pieces without assembling
 Dictionary<MethodInfo, List<MethodInfo>> Assembler.GetJigSawPuzzle<T>()
 ```
 
