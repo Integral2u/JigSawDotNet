@@ -238,7 +238,7 @@ var pipeline = Assembler.CreateInstance<Pipeline>(new Dictionary<string, string>
 |------|--------|
 | Base type must be `abstract` | JigSaw extends it with a sealed concrete subclass |
 | `[PuzzlePlace]` must be on an `abstract` method | Non-abstract placement throws at assembly time |
-| Exactly one `[PuzzlePeice]` must match per place | Zero or multiple matches throw at assembly time |
+| `[PuzzlePeice]` must match place | Zero matches throw at assembly time |
 | Pieces must share the declaring type, return type, and parameter types with their place | Mismatched signatures are silently skipped as non-candidates |
 | Assembly is cached | The same type + mapping combination is only built once per process |
 
