@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JigSawDotNet", "JigSawDotNe
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sandbox", "Sandbox\Sandbox.csproj", "{AE9A2680-E291-42E2-ACD3-0B53A5565224}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JigSawDotNetTests", "JigSawDotNetTests\JigSawDotNetTests.csproj", "{5673633F-F5E6-4607-9BA2-01B68F818C7E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -21,6 +23,10 @@ Global
 		{AE9A2680-E291-42E2-ACD3-0B53A5565224}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{AE9A2680-E291-42E2-ACD3-0B53A5565224}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{AE9A2680-E291-42E2-ACD3-0B53A5565224}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5673633F-F5E6-4607-9BA2-01B68F818C7E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5673633F-F5E6-4607-9BA2-01B68F818C7E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5673633F-F5E6-4607-9BA2-01B68F818C7E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5673633F-F5E6-4607-9BA2-01B68F818C7E}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

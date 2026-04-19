@@ -4,6 +4,23 @@
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <Title>JigSawDotNet</Title>
+    <Description>A lightweight .NET library that eliminates the runtime cost of conditional dispatch — switch statements, delegate indirection, and virtual calls — by assembling a purpose-built concrete type at startup whose abstract methods are directly wired to the chosen implementation via IL emission.</Description>
+    <PackageProjectUrl>https://github.com/Integral2u/JigSawDotNet</PackageProjectUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/Integral2u/JigSawDotNet</RepositoryUrl>
+    <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\LICENSE.txt">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+    <None Include="..\README.md">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+  </ItemGroup>
 
 </Project>

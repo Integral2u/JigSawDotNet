@@ -41,7 +41,8 @@ namespace JigSawDotNet
                     if (string.IsNullOrWhiteSpace(value) || value != puzzlePeice.Value) continue;
                     if (method.DeclaringType == candidate.DeclaringType
                         && method.ReturnType == candidate.ReturnType
-                        && Enumerable.SequenceEqual(method.GetParameters(), candidate.GetParameters())) yield return candidate;
+                        && method.GetParameters().Select(p => p.ParameterType).SequenceEqual(candidate.GetParameters().Select(p => p.ParameterType))) 
+                        yield return candidate;
                 }
             }
             static void CopyCustomAttributes(MethodInfo source, MethodBuilder target)
@@ -371,7 +372,7 @@ namespace JigSawDotNet
                     if (string.IsNullOrWhiteSpace(puzzlePeice.Value)) continue;
                     if (place.DeclaringType == candidate.DeclaringType
                         && place.ReturnType == candidate.ReturnType
-                        && Enumerable.SequenceEqual(place.GetParameters(), candidate.GetParameters()))
+                        && place.GetParameters().Select(p => p.ParameterType).SequenceEqual(candidate.GetParameters().Select(p => p.ParameterType)))
                         result[place].Add(candidate);
                 }
             }

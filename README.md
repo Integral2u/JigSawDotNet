@@ -4,6 +4,8 @@ A lightweight .NET library that eliminates the runtime cost of conditional dispa
 
 Optionally, JigSaw can profile every candidate implementation on the executing hardware and automatically select the fastest one.
 
+[View on NuGet](https://www.nuget.org/packages/JigSawDotNet/)
+
 ---
 
 ## The Problem
@@ -58,8 +60,9 @@ Measured on N=1000 with BenchmarkDotNet:
 
 ## Installation
 
+You can install the package via the .NET CLI:
 ```
-dotnet add package JigSawDotNet
+dotnet add package JigSawDotNet --version 1.0.0
 ```
 
 ---
