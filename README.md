@@ -56,7 +56,7 @@ Measured on N=1000 with BenchmarkDotNet:
 | MethodBDirect      | 6.964 us | Baseline — calling the method directly     | 
 | MethodCJigSaw      | 6.740 us | System-selected best implementation        |
 
-`MethodAJigSaw` lands on par with `MethodADirect` — the JIT sees identical code.
+`MethodBJigSaw` lands on par with `MethodBDirect` — the JIT sees identical code.
 
 ---
 
