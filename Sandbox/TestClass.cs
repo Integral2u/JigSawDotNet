@@ -36,7 +36,12 @@ namespace Sandbox
         public int GetHashMethodA()
         {
             var result = 0;
-            foreach (byte v in Data) result = (result * 31) + v;
+            foreach (byte v in Data)
+            {
+                var t = (result * 31);
+                t += v;
+                result = t;
+            }
             return result;
         }
         [PuzzlePeice(nameof(GetHash), "HashingMethod", "MethodB")]

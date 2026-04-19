@@ -48,11 +48,13 @@ Measured on N=1000 with BenchmarkDotNet:
 
 | Method             | Mean     | Notes                                      |
 |--------------------|----------|--------------------------------------------|
-| MethodAViaDelegate | 1.348 µs | Indirect call + null check every iteration |
-| MethodAViaSwitch   | 1.223 µs | Branch predicted but still present         |
-| MethodAJigSaw      | 1.249 µs | Direct IL copy, no dispatch overhead       |
-| MethodADirect      | 1.229 µs | Baseline — calling the method directly     |
-| MethodCJigSaw      | 1.307 µs | System-selected best implementation        |
+| MethodAViaDelegate | 7.243 us | Indirect call + null check every iteration |
+| MethodAViaSwitch   | 7.213 us | Branch predicted but still present         |
+| MethodAJigSaw      | 7.303 us | Direct IL copy, no dispatch overhead       |
+| MethodADirect      | 6.932 us | Baseline — calling the method directly     |
+| MethodBJigSaw      | 6.986 us | Direct IL copy, no dispatch overhead       |   
+| MethodBDirect      | 6.964 us | Baseline — calling the method directly     | 
+| MethodCJigSaw      | 6.740 us | System-selected best implementation        |
 
 `MethodAJigSaw` lands on par with `MethodADirect` — the JIT sees identical code.
 
