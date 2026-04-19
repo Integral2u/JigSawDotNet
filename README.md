@@ -62,7 +62,7 @@ Measured on N=1000 with BenchmarkDotNet:
 
 You can install the package via the .NET CLI:
 ```
-dotnet add package JigSawDotNet --version 1.0.0
+dotnet add package JigSawDotNet --version 1.0.1
 ```
 
 ---
