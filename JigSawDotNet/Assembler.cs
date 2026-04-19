@@ -2,7 +2,16 @@
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Reflection.Emit;
+using System.Runtime.CompilerServices;
 
+namespace System.Runtime.CompilerServices
+{
+    [AttributeUsage(AttributeTargets.Assembly, AllowMultiple = true)]
+    internal sealed class IgnoresAccessChecksToAttribute(string assemblyName) : Attribute
+    {
+        public string AssemblyName { get; } = assemblyName;
+    }
+}
 namespace JigSawDotNet
 {
     [AttributeUsage(AttributeTargets.Method, Inherited = false)]
@@ -24,7 +33,8 @@ namespace JigSawDotNet
     }
     public static class Assembler
     {
-
+        private static bool _cache = true;
+        public static bool Cache { get => _cache; set { if (!value) AssemblableMappings.Clear(); _cache = value; } }
         private static readonly Dictionary<string, Type> AssemblableMappings = [];
 
         public static Type Assemble<T>(Dictionary<string, string> mapping)
@@ -157,7 +167,7 @@ namespace JigSawDotNet
             // Validation
             if (!classType.IsAbstract) throw new InvalidOperationException($"Type {classType.FullName} must be abstract.");
             var fullName = $"{classType.FullName}{mapping.GetHashCode()}";
-            if (AssemblableMappings.TryGetValue(fullName, out var assembled)) return assembled;
+            if (Cache && AssemblableMappings.TryGetValue(fullName, out var assembled)) return assembled;
 
             var puzzlePlaces = classType.GetMethods().Where(m => m.GetCustomAttributes(typeof(PuzzlePlace), true).Length != 0);
             if (!puzzlePlaces.Any()) return classType;
@@ -179,6 +189,11 @@ namespace JigSawDotNet
             // Define the new class extending BaseClass
             AssemblyName assemblyName = classType.Assembly.GetName();
             AssemblyBuilder assemblyBuilder = AssemblyBuilder.DefineDynamicAssembly(assemblyName, AssemblyBuilderAccess.Run);
+            // Grant access to private/internal members of the originating assembly
+            assemblyBuilder.SetCustomAttribute(new CustomAttributeBuilder(
+                typeof(IgnoresAccessChecksToAttribute).GetConstructor([typeof(string)])!,
+                [classType.Assembly.GetName().Name!]));
+
             ModuleBuilder moduleBuilder = assemblyBuilder.DefineDynamicModule("MainModule");
             var typeName = $"{classType.Name}{mapping.GetHashCode()}";
             TypeBuilder typeBuilder = moduleBuilder.DefineType(typeName, TypeAttributes.Sealed | TypeAttributes.Public, typeof(T));
@@ -197,6 +212,9 @@ namespace JigSawDotNet
                     Destination.ReturnType,
                     parameterTypes);
 
+                CopyILBody(Source, methodBuilder);
+                
+                /*
                 // Emit IL that forwards all args to the source method
                 var il = methodBuilder.GetILGenerator();
 
@@ -212,13 +230,13 @@ namespace JigSawDotNet
                 il.Emit(opCode, Source);
 
                 il.Emit(OpCodes.Ret);
-
+                */
                 CopyCustomAttributes(Source, methodBuilder);
                 // Wire the override
                 typeBuilder.DefineMethodOverride(methodBuilder, Destination);
             }
             var result = typeBuilder.CreateType();
-            AssemblableMappings[fullName] = result;
+            if(Cache) AssemblableMappings[fullName] = result;
             // Finalize
             return result;
         }
@@ -379,6 +397,206 @@ namespace JigSawDotNet
                 }
             }
             return result;
+        }
+
+        private static readonly OpCode[] SingleByteOpcodes = BuildSingleByteTable();
+        private static readonly OpCode[] MultiByteOpcodes = BuildMultiByteTable();
+
+        private static OpCode[] BuildSingleByteTable()
+        {
+            var table = new OpCode[256];
+            foreach (var f in typeof(OpCodes).GetFields())
+            {
+                var op = (OpCode)f.GetValue(null)!;
+                if (op.Size == 1) table[op.Value & 0xFF] = op;
+            }
+            return table;
+        }
+
+        private static OpCode[] BuildMultiByteTable()
+        {
+            var table = new OpCode[256];
+            foreach (var f in typeof(OpCodes).GetFields())
+            {
+                var op = (OpCode)f.GetValue(null)!;
+                if (op.Size == 2) table[op.Value & 0xFF] = op;
+            }
+            return table;
+        }
+
+        private static (OpCode op, int size) ReadOpCode(byte[] il, int offset) =>
+            il[offset] == 0xFE
+                ? (MultiByteOpcodes[il[offset + 1]], 2)
+                : (SingleByteOpcodes[il[offset]], 1);
+
+        private static bool IsBranch(OpCode op) =>
+            op.FlowControl is FlowControl.Branch or FlowControl.Cond_Branch;
+
+        private static int OperandSize(OpCode op) => op.OperandType switch
+        {
+            OperandType.InlineNone => 0,
+            OperandType.ShortInlineBrTarget => 1,
+            OperandType.ShortInlineI => 1,
+            OperandType.ShortInlineR => 4,
+            OperandType.ShortInlineVar => 1,
+            OperandType.InlineBrTarget => 4,
+            OperandType.InlineField => 4,
+            OperandType.InlineI => 4,
+            OperandType.InlineMethod => 4,
+            OperandType.InlineSig => 4,
+            OperandType.InlineString => 4,
+            OperandType.InlineSwitch => 4,
+            OperandType.InlineType => 4,
+            OperandType.InlineVar => 2,
+            OperandType.InlineI8 => 8,
+            OperandType.InlineR => 8,
+            _ => 0
+        };
+
+        private static void CopyILBody(MethodInfo source, MethodBuilder target)
+        {
+            var body = source.GetMethodBody()!;
+            var il = target.GetILGenerator();
+            var module = source.Module;
+
+            foreach (var local in body.LocalVariables)
+                il.DeclareLocal(local.LocalType, local.IsPinned);
+
+            var rawIL = body.GetILAsByteArray()!;
+            var labels = new Dictionary<int, Label>();
+
+            // First pass — declare a Label for every branch target
+            int offset = 0;
+            while (offset < rawIL.Length)
+            {
+                var (op, opcodeSize) = ReadOpCode(rawIL, offset);
+                offset += opcodeSize;
+
+                if (IsBranch(op))
+                {
+                    int targetLabel = op.OperandType == OperandType.ShortInlineBrTarget
+                        ? offset + 1 + (sbyte)rawIL[offset]
+                        : offset + 4 + BitConverter.ToInt32(rawIL, offset);
+
+                    if (!labels.ContainsKey(targetLabel))
+                        labels[targetLabel] = il.DefineLabel();
+                }
+
+                offset += OperandSize(op);
+            }
+
+            // Second pass — emit
+            offset = 0;
+            while (offset < rawIL.Length)
+            {
+                if (labels.TryGetValue(offset, out var label))
+                    il.MarkLabel(label);
+
+                var (op, opcodeSize) = ReadOpCode(rawIL, offset);
+                offset += opcodeSize;
+
+                switch (op.OperandType)
+                {
+                    case OperandType.InlineNone:
+                        il.Emit(op);
+                        break;
+                    case OperandType.InlineMethod:
+                        {
+                            int token = BitConverter.ToInt32(rawIL, offset); offset += 4;
+                            var method = module.ResolveMethod(token)!;
+                            if (method is ConstructorInfo ctor) il.Emit(op, ctor);
+                            else il.Emit(op, (MethodInfo)method);
+                            break;
+                        }
+                    case OperandType.InlineField:
+                        {
+                            int token = BitConverter.ToInt32(rawIL, offset); offset += 4;
+                            il.Emit(op, module.ResolveField(token)!);
+                            break;
+                        }
+                    case OperandType.InlineType:
+                        {
+                            int token = BitConverter.ToInt32(rawIL, offset); offset += 4;
+                            il.Emit(op, module.ResolveType(token)!);
+                            break;
+                        }
+                    case OperandType.InlineString:
+                        {
+                            int token = BitConverter.ToInt32(rawIL, offset); offset += 4;
+                            il.Emit(op, module.ResolveString(token));
+                            break;
+                        }
+                    case OperandType.InlineI:
+                        {
+                            int val = BitConverter.ToInt32(rawIL, offset); offset += 4;
+                            il.Emit(op, val);
+                            break;
+                        }
+                    case OperandType.InlineI8:
+                        {
+                            long val = BitConverter.ToInt64(rawIL, offset); offset += 8;
+                            il.Emit(op, val);
+                            break;
+                        }
+                    case OperandType.InlineR:
+                        {
+                            double val = BitConverter.ToDouble(rawIL, offset); offset += 8;
+                            il.Emit(op, val);
+                            break;
+                        }
+                    case OperandType.ShortInlineR:
+                        {
+                            float val = BitConverter.ToSingle(rawIL, offset); offset += 4;
+                            il.Emit(op, val);
+                            break;
+                        }
+                    case OperandType.ShortInlineI:
+                        il.Emit(op, (sbyte)rawIL[offset++]);
+                        break;
+                    case OperandType.InlineBrTarget:
+                        {
+                            int abs = offset + 4 + BitConverter.ToInt32(rawIL, offset); offset += 4;
+                            il.Emit(op, labels[abs]);
+                            break;
+                        }
+                    case OperandType.ShortInlineBrTarget:
+                        {
+                            int abs = offset + 1 + (sbyte)rawIL[offset]; offset += 1;
+                            il.Emit(op, labels[abs]);
+                            break;
+                        }
+                    case OperandType.InlineSwitch:
+                        {
+                            int count = BitConverter.ToInt32(rawIL, offset); offset += 4;
+                            int baseOff = offset + count * 4;
+                            var targets = new Label[count];
+                            for (int i = 0; i < count; i++)
+                            {
+                                int abs = baseOff + BitConverter.ToInt32(rawIL, offset); offset += 4;
+                                if (!labels.TryGetValue(abs, out var switchLabel))
+                                {
+                                    switchLabel = il.DefineLabel();
+                                    labels[abs] = switchLabel;
+                                }
+                                targets[i] = switchLabel;
+                            }
+                            il.Emit(op, targets);
+                            break;
+                        }
+                    case OperandType.InlineVar:
+                        {
+                            short idx = BitConverter.ToInt16(rawIL, offset); offset += 2;
+                            il.Emit(op, idx);
+                            break;
+                        }
+                    case OperandType.ShortInlineVar:
+                        il.Emit(op, rawIL[offset++]);
+                        break;
+                    case OperandType.InlineSig:
+                        offset += 4;
+                        break;
+                }
+            }
         }
     }
 }

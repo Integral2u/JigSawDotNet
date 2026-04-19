@@ -48,13 +48,14 @@ Measured on N=1000 with BenchmarkDotNet:
 
 | Method             | Mean     | Notes                                      |
 |--------------------|----------|--------------------------------------------|
-| MethodAViaDelegate | 7.243 us | Indirect call + null check every iteration |
-| MethodAViaSwitch   | 7.213 us | Branch predicted but still present         |
-| MethodAJigSaw      | 7.303 us | Direct IL copy, no dispatch overhead       |
-| MethodADirect      | 6.932 us | Baseline — calling the method directly     |
-| MethodBJigSaw      | 6.986 us | Direct IL copy, no dispatch overhead       |   
-| MethodBDirect      | 6.964 us | Baseline — calling the method directly     | 
-| MethodCJigSaw      | 6.740 us | System-selected best implementation        |
+| MethodAViaDelegate | 6.800 us | Indirect call + null check every iteration |
+| MethodAViaSwitch   | 6.782 us | Branch predicted but still present         |
+| MethodAJigSaw      | 6.810 us | Direct IL copy, no dispatch overhead       |
+| MethodADirect      | 6.815 us | Baseline — calling the method directly     |
+| MethodBJigSaw      | 7.171 us | Direct IL copy, no dispatch overhead       |   
+| MethodBDirect      | 7.043 us | Baseline — calling the method directly     | 
+| MethodCJigSaw      | 6.757 us | System-selected best implementation        |
+
 
 `MethodBJigSaw` lands on par with `MethodBDirect` — the JIT sees identical code.
 
