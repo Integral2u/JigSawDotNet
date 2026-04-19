@@ -2,7 +2,6 @@
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Reflection.Emit;
-using System.Runtime.CompilerServices;
 
 namespace JigSawDotNet
 {
@@ -36,12 +35,15 @@ namespace JigSawDotNet
                 {
                     var puzzlePeice = candidate.GetCustomAttribute<PuzzlePeice>();
                     if (puzzlePeice == null) continue;
+                    if (puzzlePeice.Pointer != pointer) continue;  // ← fixes both failures
                     if (string.IsNullOrWhiteSpace(puzzlePeice.Key)) continue;
                     if (!mapping.TryGetValue(puzzlePeice.Key, out var value)) continue;
                     if (string.IsNullOrWhiteSpace(value) || value != puzzlePeice.Value) continue;
                     if (method.DeclaringType == candidate.DeclaringType
                         && method.ReturnType == candidate.ReturnType
-                        && method.GetParameters().Select(p => p.ParameterType).SequenceEqual(candidate.GetParameters().Select(p => p.ParameterType))) 
+                        && method.GetParameters()
+                                 .Select(p => p.ParameterType)
+                                 .SequenceEqual(candidate.GetParameters().Select(p => p.ParameterType)))
                         yield return candidate;
                 }
             }
