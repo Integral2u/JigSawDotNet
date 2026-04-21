@@ -7,9 +7,7 @@ Optionally, JigSaw can profile every candidate implementation on the executing h
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Last commit](https://img.shields.io/github/last-commit/Integral2u/JigSawDotNet)](https://github.com/Integral2u/JigSawDotNet/commits/main)
 [![Latest release](https://img.shields.io/github/v/release/Integral2u/JigSawDotNet?style=flat)](https://github.com/Integral2u/JigSawDotNet/releases/latest)
-
-
-[View on NuGet](https://www.nuget.org/packages/JigSawDotNet/)
+[![NuGet](https://img.shields.io/badge/NuGet-004880?logo=nuget&logoColor=fff)](https://www.nuget.org/packages/JigSawDotNet/)
 
 ---
 
