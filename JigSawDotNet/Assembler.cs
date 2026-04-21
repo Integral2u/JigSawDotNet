@@ -2,6 +2,7 @@
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Reflection.Emit;
+using System.Reflection.Metadata;
 using System.Runtime.CompilerServices;
 
 namespace System.Runtime.CompilerServices
@@ -14,13 +15,30 @@ namespace System.Runtime.CompilerServices
 }
 namespace JigSawDotNet
 {
+    public record MethodReference(string Key, string FullyQualifiedStaticMethod);
     [AttributeUsage(AttributeTargets.Method, Inherited = false)]
     public class PuzzlePlace(string pointer) : Attribute
     {
         //The abstract method to place this method peice
         public string Pointer { get; init; } = pointer;
     }
-
+    [AttributeUsage(AttributeTargets.Method, Inherited = false)] //Expect excptions if not used correctly
+    public class PuzzleCornerPiece : Attribute
+    {
+        public string Pointer { get; init; }
+        public IDictionary<string, string> KeyValues { get; set; } = new Dictionary<string, string>(); //(FullyQualifiedName id the goto but allow lazy in class definitions
+        public PuzzleCornerPiece(string pointer, params string[] keyValues)
+        {
+            Pointer = pointer;
+            if (keyValues.Length % 2 != 0)
+                throw new ArgumentException("attribute values should be set in pairs");
+            for (var i = 0; i < keyValues.Length; i += 2)
+            {
+                var (key, value) = (keyValues[i], keyValues[i + 1]);
+                KeyValues.Add(key, value);
+            }
+        }
+    }
     [AttributeUsage(AttributeTargets.Method, Inherited = false)]
     public class PuzzlePeice(string pointer, string key, string value) : Attribute
     {
@@ -170,7 +188,8 @@ namespace JigSawDotNet
             if (Cache && AssemblableMappings.TryGetValue(fullName, out var assembled)) return assembled;
 
             var puzzlePlaces = classType.GetMethods().Where(m => m.GetCustomAttributes(typeof(PuzzlePlace), true).Length != 0);
-            if (!puzzlePlaces.Any()) return classType;
+            var puzzleCornerPlaces = classType.GetMethods().Where(m => m.GetCustomAttributes(typeof(PuzzleCornerPiece), true).Length != 0);
+            if (!puzzlePlaces.Any() && !puzzleCornerPlaces.Any()) return classType;
             var puzzlePeices = classType.GetMethods().Where(m => m.GetCustomAttributes(typeof(PuzzlePeice), true).Length != 0);
 
             var buildList = new List<(MethodInfo Destination, MethodInfo Source)>();
@@ -185,6 +204,15 @@ namespace JigSawDotNet
                 if (count == 0) throw new InvalidOperationException($"Method {place.Name} has no valid [{nameof(PuzzlePeice)}] to use.");
                 if (count != 1) throw new InvalidOperationException($"Method {place.Name} has multiple valid [{nameof(PuzzlePeice)}] to use, Must only be one viable candidate for mappings.");
                 buildList.Add((place, peices.Single()));
+            }
+            foreach (var place in puzzleCornerPlaces)
+            {
+                if (!place.IsAbstract) throw new InvalidOperationException($"Method {place.Name} must be abstract to use [{nameof(PuzzlePlace)}].");
+                var puzzleCornerPlace = place.GetCustomAttribute<PuzzleCornerPiece>();
+                if (puzzleCornerPlace == null) continue; //Never the case                
+                var peice = GetPuzzleCornerPeiceFor(place, mapping, puzzleCornerPlace);
+                if (peice == null) throw new InvalidOperationException($"Method {place.Name} has no valid method to use.");
+                buildList.Add((place, peice));
             }
             // Define the new class extending BaseClass
             AssemblyName assemblyName = classType.Assembly.GetName();
@@ -211,35 +239,61 @@ namespace JigSawDotNet
                     MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.HideBySig | MethodAttributes.ReuseSlot,
                     Destination.ReturnType,
                     parameterTypes);
+                if (Source.IsStatic)
+                {
+                    EmitForwardingIL(methodBuilder, Source, parameterTypes);
+                }
+                else
+                {
+                    CopyILBody(Source, methodBuilder);
+                }
 
-                CopyILBody(Source, methodBuilder);
-                
-                /*
-                // Emit IL that forwards all args to the source method
-                var il = methodBuilder.GetILGenerator();
-
-                // Load 'this' only if source method is an instance method
-                if (!Source.IsStatic)
-                    il.Emit(OpCodes.Ldarg_0);
-                // Load every parameter (Ldarg_0 = this, so params start at 1)
-                for (int i = 0; i < parameterTypes.Length; i++)
-                    il.Emit(OpCodes.Ldarg, i + 1);
-
-                // Use Call for non-virtual instance methods, Callvirt only when truly needed
-                var opCode = (!Source.IsStatic && Source.IsVirtual) ? OpCodes.Callvirt : OpCodes.Call;
-                il.Emit(opCode, Source);
-
-                il.Emit(OpCodes.Ret);
-                */
                 CopyCustomAttributes(Source, methodBuilder);
                 // Wire the override
                 typeBuilder.DefineMethodOverride(methodBuilder, Destination);
             }
             var result = typeBuilder.CreateType();
-            if(Cache) AssemblableMappings[fullName] = result;
+            if (Cache) AssemblableMappings[fullName] = result;
             // Finalize
             return result;
         }
+
+        private static MethodInfo GetPuzzleCornerPeiceFor(MethodInfo place, Dictionary<string, string> mapping, PuzzleCornerPiece puzzleCornerPlace)
+        {
+            if (place.DeclaringType == null) throw new InvalidOperationException($"Method {place.Name} DeclaringType is null.");
+            if (!mapping.TryGetValue(puzzleCornerPlace.Pointer, out var mapValue)) throw new InvalidOperationException($"Method {place.Name} has no value set for {puzzleCornerPlace.Pointer}");
+            if (!puzzleCornerPlace.KeyValues.TryGetValue(mapValue, out var mapTarget)) throw new InvalidOperationException($"Method {place.Name} has no target set for {puzzleCornerPlace.Pointer} with option {mapValue}");
+           
+            int lastDot = mapTarget.LastIndexOf('.');
+            if (lastDot < 0)
+            {
+                mapTarget = $"{place.DeclaringType.FullName}.{mapTarget}";
+                lastDot = mapTarget.LastIndexOf('.');
+            }
+
+            string typeName = mapTarget[..lastDot];
+            string methodName = mapTarget[(lastDot + 1)..];
+
+
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                var type = asm.GetType(typeName);
+                if (type is null) continue;
+
+                var method = type.GetMethod(
+                    methodName,
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+
+                if (method is not null
+                    && method.ReturnType == place.ReturnType
+                    && method.GetParameters()
+                             .Select(p => p.ParameterType)
+                             .SequenceEqual(place.GetParameters().Select(p => p.ParameterType)))
+                    return method;
+            }
+            throw new InvalidOperationException($"Method {place.Name} has no valid static method match to use.");
+        }
+
         public static T CreateInstance<T>(Dictionary<string, string> mapping, params object?[]? args) => (T)Activator.CreateInstance(Assemble<T>(mapping), args)!;
         public static T CreateInstanceForSystem<T>(Func<MethodInfo, object?[]?> getArgsFor, out Dictionary<string, string> bestCombination, params object?[]? constructorArgs) => CreateInstanceForSystem<T>(getArgsFor, [], 200, 2_000, out bestCombination, constructorArgs);
         public static T CreateInstanceForSystem<T>(Func<MethodInfo, object?[]?> getArgsFor, Dictionary<string, string> mapping, out Dictionary<string, string> bestCombination, params object?[]? constructorArgs) => CreateInstanceForSystem<T>(getArgsFor, mapping, 200, 2_000, out bestCombination, constructorArgs);
@@ -452,7 +506,34 @@ namespace JigSawDotNet
             OperandType.InlineR => 8,
             _ => 0
         };
+        /// <summary>
+        /// Emits forwarding IL into <paramref name="destination"/> that loads
+        /// every parameter (skipping 'this') and calls <paramref name="staticTarget"/> directly.
+        /// <c>ldarg_1 … ldarg_N → call static → ret</c>
+        /// </summary>
+        private static void EmitForwardingIL(
+            MethodBuilder destination,
+            MethodInfo staticTarget,
+            Type[] destinationParamTypes)
+        {
+            var targetParams = staticTarget.GetParameters();
+            if (targetParams.Length != destinationParamTypes.Length)
+                throw new InvalidOperationException(
+                    $"PuzzleCornerPiece forwarding mismatch: " +
+                    $"destination has {destinationParamTypes.Length} parameter(s) but " +
+                    $"'{staticTarget.DeclaringType?.Name}.{staticTarget.Name}' has {targetParams.Length}. " +
+                    "The external static method must have the same parameter list as the PuzzlePlace.");
 
+            var il = destination.GetILGenerator();
+
+            // ldarg_0 = 'this' in the instance override — skip it.
+            // ldarg_1..N map to the real parameters.
+            for (int i = 0; i < destinationParamTypes.Length; i++)
+                il.Emit(OpCodes.Ldarg, i + 1);
+
+            il.Emit(OpCodes.Call, staticTarget); // direct static call; JIT will inline
+            il.Emit(OpCodes.Ret);
+        }
         private static void CopyILBody(MethodInfo source, MethodBuilder target)
         {
             var body = source.GetMethodBody()!;

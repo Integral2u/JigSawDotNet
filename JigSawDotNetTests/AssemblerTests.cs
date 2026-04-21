@@ -111,17 +111,52 @@ namespace JigSawDotNet.Tests
         [PuzzlePeice(nameof(Transform), "Op", "Multiply")]
         public int TransformMultiply(int x, int y) => x * y;
     }
+    public static class ExternalMath
+    {
+        /// <summary>Multiply a + b — used by FQN resolution test.</summary>
+        public static int Add(int a, int b) => a + b;
 
+        /// <summary>Subtract a - b — used by RegisterCorner test.</summary>
+        public static int Subtract(int a, int b) => a - b;
+
+    }
+    public abstract class MathOps
+    {
+        [PuzzleCornerPiece("Add", "AddExternal", "JigSawDotNet.Tests.ExternalMath.Add", "AddInternal", "AddInternal")]
+        public abstract int Add(int a, int b);
+        public static int AddInternal(int a, int b) => a + b;
+    }
     // -------------------------------------------------------------------------
     // Tests
     // -------------------------------------------------------------------------
 
     public class AssemblerTests
     {
+        public AssemblerTests()
+        {
+            Assembler.Cache = false;
+        }
+        public void Dispose() => Assembler.Cache = true; // restore default
         // -----------------------------------------------------------------
         // Assemble<T>
         // -----------------------------------------------------------------
 
+        [Fact]
+        public void CreateInstance_CornerPeice_Local()
+        {
+            var ops = Assembler.CreateInstance<MathOps>(
+                new Dictionary<string, string> { ["Add"] = "AddInternal" });
+
+            Assert.Equal(5, ops.Add(2, 3));
+        }
+        [Fact]
+        public void CreateInstance_CornerPeice_External()
+        {
+            var ops = Assembler.CreateInstance<MathOps>(
+                new Dictionary<string, string> { ["Add"] = "AddExternal" });
+
+            Assert.Equal(5, ops.Add(2, 3));
+        }
         [Fact]
         public void Assemble_ThrowsForConcreteType()
         {
@@ -180,10 +215,12 @@ namespace JigSawDotNet.Tests
         [Fact]
         public void Assemble_ReturnsCachedTypeOnSecondCall()
         {
+            Assembler.Cache = true;
             var mapping = new Dictionary<string, string> { ["Mode"] = "Double" };
             var first = Assembler.Assemble<Calculator>(mapping);
             var second = Assembler.Assemble<Calculator>(mapping);
             Assert.Same(first, second);
+            Assembler.Cache = false;
         }
 
         [Fact]
