@@ -2,7 +2,6 @@
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Reflection.Emit;
-using System.Reflection.Metadata;
 using System.Runtime.CompilerServices;
 
 namespace System.Runtime.CompilerServices
@@ -210,8 +209,7 @@ namespace JigSawDotNet
                 if (!place.IsAbstract) throw new InvalidOperationException($"Method {place.Name} must be abstract to use [{nameof(PuzzlePlace)}].");
                 var puzzleCornerPlace = place.GetCustomAttribute<PuzzleCornerPiece>();
                 if (puzzleCornerPlace == null) continue; //Never the case                
-                var peice = GetPuzzleCornerPeiceFor(place, mapping, puzzleCornerPlace);
-                if (peice == null) throw new InvalidOperationException($"Method {place.Name} has no valid method to use.");
+                var peice = GetPuzzleCornerPeiceFor(place, mapping, puzzleCornerPlace) ?? throw new InvalidOperationException($"Method {place.Name} has no valid method to use.");
                 buildList.Add((place, peice));
             }
             // Define the new class extending BaseClass
@@ -352,9 +350,13 @@ namespace JigSawDotNet
                 .Where(m => m.GetCustomAttribute<PuzzlePlace>() is not null)
                 .Select(m => (Method: m, Args: getArgsFor(m)))
                 .ToList();
+            var puzzleCornerPlaces = classType.GetMethods()
+                .Where(m => m.GetCustomAttribute<PuzzleCornerPiece>() is not null)
+                .Select(m => (Method: m, Args: getArgsFor(m)))
+                .ToList();
 
-            if (puzzlePlaces.Count == 0)
-                throw new InvalidOperationException($"Type {classType.FullName} has no [{nameof(PuzzlePlace)}] methods to benchmark.");
+            if (puzzlePlaces.Count == 0 && puzzleCornerPlaces.Count == 0)
+                throw new InvalidOperationException($"Type {classType.FullName} has no [{nameof(PuzzlePlace)}] or [{nameof(PuzzleCornerPiece)}] methods to benchmark.");
 
             // Build combination space from free (un-pinned) keys
             var byKey = classType.GetMethods()
@@ -362,7 +364,15 @@ namespace JigSawDotNet
                 .Where(a => a is not null)
                 .GroupBy(a => a!.Key)
                 .ToDictionary(g => g.Key, g => g.Select(a => a!.Value).Distinct().ToList());
-
+            foreach( var (Method, Args) in puzzleCornerPlaces)
+            {
+                var options = Method.GetCustomAttribute<PuzzleCornerPiece>() ?? throw new NullReferenceException($"{Method.Name} is missing attribute [{nameof(PuzzleCornerPiece)}]");
+                if (!byKey.ContainsKey(options.Pointer)) byKey.Add(options.Pointer, []);
+                foreach (var option in options.KeyValues)
+                {
+                    byKey[options.Pointer].Add(option.Key); //The value points to actual method
+                }
+            }
             foreach (var key in pinnedMapping.Keys)
                 byKey.Remove(key);
 
@@ -398,7 +408,7 @@ namespace JigSawDotNet
                         // Resolve the concrete (non-abstract) override on the assembled type
                         var concrete = assembled.GetMethod(
                             p.Method.Name,
-                            p.Method.GetParameters().Select(x => x.ParameterType).ToArray())!;
+                            [.. p.Method.GetParameters().Select(x => x.ParameterType)])!;
 
                         return BuildInvoker(instance!, concrete, p.Args);
                     })
@@ -436,7 +446,7 @@ namespace JigSawDotNet
 
             foreach (var place in puzzlePlaces)
             {
-                result[place] = new List<MethodInfo>();
+                result[place] = [];
                 foreach (var candidate in puzzlePeices)
                 {
                     var puzzlePeice = candidate.GetCustomAttribute<PuzzlePeice>();

@@ -126,6 +126,19 @@ namespace JigSawDotNet.Tests
         public abstract int Add(int a, int b);
         public static int AddInternal(int a, int b) => a + b;
     }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Additional class — Subtract proves argument order is preserved
+    // ─────────────────────────────────────────────────────────────────────────────
+    public abstract class SubtractOps
+    {
+        [PuzzleCornerPiece("Subtract",
+            "SubtractExternal", "JigSawDotNet.Tests.ExternalMath.Subtract",
+            "SubtractInternal", "SubtractInternal")]
+        public abstract int Subtract(int a, int b);
+
+        public static int SubtractInternal(int a, int b) => a - b;
+    }
     // -------------------------------------------------------------------------
     // Tests
     // -------------------------------------------------------------------------
@@ -140,6 +153,63 @@ namespace JigSawDotNet.Tests
         // -----------------------------------------------------------------
         // Assemble<T>
         // -----------------------------------------------------------------
+
+        [Fact]
+        public void CreateInstanceForSystem_CornerPeice()
+        {
+            var instance = Assembler.CreateInstanceForSystem<MathOps>(
+                getArgsFor: _ => [5,6],
+                bestCombination: out _,
+                constructorArgs: []);
+
+            Assert.Equal(11, instance.Add(5, 6));
+        }
+        [Fact]
+        public void BothOptions_ProduceSameResult()
+        {
+            var local = Assembler.CreateInstance<MathOps>(new Dictionary<string, string> { ["Add"] = "AddInternal" });
+            var external = Assembler.CreateInstance<MathOps>(new Dictionary<string, string> { ["Add"] = "AddExternal" });
+
+            Assert.Equal(local.Add(10, 20), external.Add(10, 20));
+            Assert.Equal(local.Add(-5, 5), external.Add(-5, 5));
+            Assert.Equal(local.Add(0, 0), external.Add(0, 0));
+        }
+        [Fact]
+        public void ArgOrder_External_NotCommutative()
+        {
+            var ops = Assembler.CreateInstance<SubtractOps>(
+                new Dictionary<string, string> { ["Subtract"] = "SubtractExternal" });
+
+            Assert.Equal(3, ops.Subtract(5, 2));   // 5 - 2 = 3
+            Assert.Equal(-3, ops.Subtract(2, 5));   // 2 - 5 = -3  ← proves no arg shift
+        }
+        [Fact]
+        public void ArgOrder_Internal_NotCommutative()
+        {
+            var ops = Assembler.CreateInstance<SubtractOps>(
+                new Dictionary<string, string> { ["Subtract"] = "SubtractInternal" });
+
+            Assert.Equal(7, ops.Subtract(10, 3));
+            Assert.Equal(-7, ops.Subtract(3, 10));
+        }
+        [Fact]
+        public void MissingMappingKey_ThrowsAndListsOptions()
+        {
+            var ex = Assert.Throws<InvalidOperationException>(() =>
+                Assembler.CreateInstance<MathOps>(
+                    new Dictionary<string, string> { ["WrongKey"] = "AddInternal" }));
+
+            // Error must name the Pointer and list the declared option keys
+            Assert.Contains("Add", ex.Message);
+        }
+
+        [Fact]
+        public void UnknownMappingValue_ThrowsAndListsOptions()
+        {
+            var ex = Assert.Throws<InvalidOperationException>(() =>
+                Assembler.CreateInstance<MathOps>(
+                    new Dictionary<string, string> { ["Add"] = "DoesNotExist" }));
+        }
 
         [Fact]
         public void CreateInstance_CornerPeice_Local()
