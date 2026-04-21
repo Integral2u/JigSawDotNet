@@ -4,6 +4,8 @@ A lightweight .NET library that eliminates the runtime cost of conditional dispa
 
 Optionally, JigSaw can profile every candidate implementation on the executing hardware and automatically select the fastest one.
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 [View on NuGet](https://www.nuget.org/packages/JigSawDotNet/)
 
 ---
