@@ -4,12 +4,6 @@ A lightweight .NET library that eliminates the runtime cost of conditional dispa
 
 Optionally, JigSaw can profile every candidate implementation on the executing hardware and automatically select the fastest one.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Last commit](https://img.shields.io/github/last-commit/Integral2u/JigSawDotNet)](https://github.com/Integral2u/JigSawDotNet/commits/main)
-[![Latest release](https://img.shields.io/github/v/release/Integral2u/JigSawDotNet?style=flat)](https://github.com/Integral2u/JigSawDotNet/releases/latest)
-[![NuGet](https://img.shields.io/nuget/v/JigSawDotNet.svg)](https://www.nuget.org/packages/JigSawDotNet)
-[![NuGet Downloads](https://img.shields.io/nuget/dt/JigSawDotNet.svg)](https://www.nuget.org/packages/JigSawDotNet)
-![GitHub Sponsor](https://img.shields.io/github/sponsors/Integral2u?label=Sponsor&logo=GitHub)
 ---
 
 ## The Problem
@@ -52,33 +46,161 @@ Measured on N=1000 with BenchmarkDotNet:
 
 | Method             | Mean     | Notes                                      |
 |--------------------|----------|--------------------------------------------|
-| MethodAViaDelegate | 6.800 us | Indirect call + null check every iteration |
-| MethodAViaSwitch   | 6.782 us | Branch predicted but still present         |
-| MethodAJigSaw      | 6.810 us | Direct IL copy, no dispatch overhead       |
-| MethodADirect      | 6.815 us | Baseline — calling the method directly     |
-| MethodBJigSaw      | 7.171 us | Direct IL copy, no dispatch overhead       |   
-| MethodBDirect      | 7.043 us | Baseline — calling the method directly     | 
-| MethodCJigSaw      | 6.757 us | System-selected best implementation        |
+| MethodAViaDelegate | 1.348 µs | Indirect call + null check every iteration |
+| MethodAViaSwitch   | 1.223 µs | Branch predicted but still present         |
+| MethodAJigSaw      | 1.249 µs | Direct IL copy, no dispatch overhead       |
+| MethodADirect      | 1.229 µs | Baseline — calling the method directly     |
+| MethodCJigSaw      | 1.307 µs | System-selected best implementation        |
 
-
-`MethodBJigSaw` lands on par with `MethodBDirect` — the JIT sees identical code.
+`MethodAJigSaw` lands on par with `MethodADirect` — the JIT sees identical code.
 
 ---
 
 ## Installation
 
-You can install the package via the .NET CLI:
 ```
-dotnet add package JigSawDotNet --version 1.0.1
+dotnet add package JigSawDotNet
 ```
+
+---
+
+## Attributes
+
+JigSaw uses three attributes to describe the puzzle. Two mark the **abstract slot** to be filled (`[PuzzlePlace]` and `[PuzzleCornerPiece]`), and one marks each **candidate implementation** (`[PuzzlePeice]`).
+
+### `[PuzzlePeice]`
+
+Marks a method as a candidate implementation for a named abstract slot.
+
+```csharp
+[PuzzlePeice(pointer, key, value)]
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `pointer` | Name of the abstract slot this piece can fill |
+| `key`     | The mapping key that selects this piece |
+| `value`   | The mapping value that selects this piece |
+
+A piece is selected when `mapping[key] == value`.
+
+---
+
+### `[PuzzlePlace]`
+
+Marks an abstract method as a slot to be filled by a `[PuzzlePeice]` from within the same class, or optionally from external assemblies.
+
+```csharp
+[PuzzlePlace(pointer, allowStaticExternal = false, handshake = null)]
+```
+
+| Parameter            | Default | Description |
+|----------------------|---------|-------------|
+| `pointer`            | —       | Identifier that links this place to its pieces. Typically `nameof(TheMethod)` |
+| `allowStaticExternal`| `false` | When `true`, JigSaw also scans all referenced assemblies for `[PuzzlePeice]` methods that match this place's pointer, return type, and parameter types |
+| `handshake`          | `null`  | Name of a `static bool` method on the declaring type. When set, any external piece candidate must pass this check before being accepted |
+
+**Basic usage:**
+
+```csharp
+[PuzzlePlace(nameof(ComputeHash))]
+public abstract int ComputeHash();
+```
+
+**With external pieces allowed:**
+
+```csharp
+[PuzzlePlace(nameof(ComputeHash), allowStaticExternal: true)]
+public abstract int ComputeHash();
+```
+
+**With a handshake to validate external pieces:**
+
+```csharp
+[PuzzlePlace(nameof(ComputeHash), allowStaticExternal: true, handshake: nameof(ValidatePiece))]
+public abstract int ComputeHash();
+
+// Receives the candidate MethodInfo — return true to accept, false to reject
+public static bool ValidatePiece(MethodInfo candidate) =>
+    candidate.GetCustomAttribute<MyRequiredAttribute>() is not null;
+```
+
+The handshake runs at assembly time, not on every call. Use it to enforce contracts on external pieces — required attributes, naming conventions, security policies, etc.
+
+---
+
+### `[PuzzleCornerPiece]`
+
+A self-contained alternative to `[PuzzlePlace]` + `[PuzzlePeice]` for cases where the available implementations are known at design time and expressed as a fixed lookup table directly on the abstract method. The attribute itself carries both the slot declaration and the full list of options.
+
+```csharp
+// Simple form — no external pieces
+[PuzzleCornerPiece(pointer, key1, method1, key2, method2, ...)]
+
+// Extended form — with external pieces and handshake
+[PuzzleCornerPiece(pointer, allowStaticExternal, handshake, key1, method1, key2, method2, ...)]
+```
+
+| Parameter            | Default | Description |
+|----------------------|---------|-------------|
+| `pointer`            | —       | Identifier for this slot. The mapping key must equal this value when `allowStaticExternal` is `false` |
+| `allowStaticExternal`| `false` | When `true`, JigSaw first scans external assemblies for `[PuzzlePeice]` methods that match this slot, falling back to the built-in key/method table if none are found |
+| `handshake`          | `null`  | Name of a `static bool` method on the declaring type. External piece candidates must pass this check |
+| `key, method` pairs  | —       | Flat list of alternating option names and target method names or fully-qualified static method paths |
+
+The key/method pairs map a **mapping value** to a method to use. The method can be:
+- A simple name resolved on the declaring type: `"MyMethod"`
+- A fully-qualified static path: `"My.Namespace.SomeClass.MyMethod"`
+
+**Simple form — fixed internal options:**
+
+```csharp
+public abstract class MathOps
+{
+    [PuzzleCornerPiece(nameof(Add),
+        "AddInternal",  "AddInternal",                        // mapping value → method on this type
+        "AddExternal",  "My.Other.Assembly.ExternalMath.Add"  // mapping value → external static method
+    )]
+    public abstract int Add(int a, int b);
+
+    public static int AddInternal(int a, int b) => a + b;
+}
+
+// Usage — the mapping key matches the pointer name
+var ops = Assembler.CreateInstance<MathOps>(
+    new Dictionary<string, string> { ["Add"] = "AddInternal" });
+```
+
+**Extended form — external pieces via `[PuzzlePeice]` with a handshake:**
+
+```csharp
+public abstract class Processor
+{
+    // AllowStaticExternal=true: any assembly can contribute a [PuzzlePeice] for "Process"
+    // Handshake: only accept pieces that declare [ApprovedAlgorithm]
+    [PuzzleCornerPiece("Process",
+        allowStaticExternal: true,
+        handshake:           nameof(IsApproved),
+        "Fallback",          "FallbackProcess"   // built-in option if no external piece matches
+    )]
+    public abstract byte[] Process(byte[] data);
+
+    public static byte[] FallbackProcess(byte[] data) => data;
+
+    public static bool IsApproved(MethodInfo candidate) =>
+        candidate.GetCustomAttribute<ApprovedAlgorithmAttribute>() is not null;
+}
+```
+
+When `allowStaticExternal: true`, JigSaw resolves in this order:
+1. Scan all referenced assemblies for a `[PuzzlePeice]` whose `pointer`, return type, and parameter types match, and whose `key/value` matches the current mapping — validated by the handshake if one is set
+2. If no external piece matches, fall back to the built-in key/method table using the mapping value
 
 ---
 
 ## Quick Start
 
-### 1. Annotate your abstract class
-
-Mark the abstract method you want filled with `[PuzzlePlace]`, and each candidate implementation with `[PuzzlePeice]`, giving each a key/value pair that identifies when it should be selected:
+### Basic — pieces defined on the same class
 
 ```csharp
 using JigSawDotNet;
@@ -89,11 +211,9 @@ public abstract class Hasher
 
     public Hasher(byte[] data) => _data = data;
 
-    // The slot to be filled
     [PuzzlePlace(nameof(ComputeHash))]
     public abstract int ComputeHash();
 
-    // Candidate A
     [PuzzlePeice(nameof(ComputeHash), "Algorithm", "Polynomial")]
     public int HashPolynomial()
     {
@@ -102,7 +222,6 @@ public abstract class Hasher
         return result;
     }
 
-    // Candidate B
     [PuzzlePeice(nameof(ComputeHash), "Algorithm", "Span")]
     public int HashSpan()
     {
@@ -112,11 +231,53 @@ public abstract class Hasher
         return result;
     }
 }
+
+var hasher = Assembler.CreateInstance<Hasher>(new Dictionary<string, string>
+{
+    ["Algorithm"] = "Polynomial"
+}, data);
 ```
 
-### 2. Assemble and instantiate
+### External pieces via `AllowStaticExternal`
 
-**Assemble the `Type` only** — useful when you manage instantiation yourself:
+Pieces can live in a completely separate assembly. This is useful for plugin architectures or when implementations are provided by downstream packages.
+
+```csharp
+// In your core library
+public abstract class Hasher
+{
+    private readonly byte[] _data;
+    public Hasher(byte[] data) => _data = data;
+
+    [PuzzlePlace(nameof(ComputeHash), allowStaticExternal: true, handshake: nameof(Verify))]
+    public abstract int ComputeHash();
+
+    // Only accept external pieces that carry [CertifiedHash]
+    public static bool Verify(MethodInfo candidate) =>
+        candidate.GetCustomAttribute<CertifiedHashAttribute>() is not null;
+}
+
+// In a plugin assembly — no reference back to Hasher required, only to JigSawDotNet
+public static class FastHashPlugin
+{
+    [PuzzlePeice(nameof(Hasher.ComputeHash), "Algorithm", "Native")]
+    [CertifiedHash]
+    public static int NativeHash(byte[] data)
+    {
+        // ... hardware-accelerated implementation
+    }
+}
+
+// At startup — picks up the plugin piece automatically
+var hasher = Assembler.CreateInstance<Hasher>(new Dictionary<string, string>
+{
+    ["Algorithm"] = "Native"
+}, data);
+```
+
+### Assemble only
+
+Useful when you manage construction yourself:
 
 ```csharp
 Type hasherType = Assembler.Assemble<Hasher>(new Dictionary<string, string>
@@ -126,16 +287,9 @@ Type hasherType = Assembler.Assemble<Hasher>(new Dictionary<string, string>
 var hasher = (Hasher)Activator.CreateInstance(hasherType, data)!;
 ```
 
-**Assemble and create in one step:**
+### System-tuned selection
 
-```csharp
-var hasher = Assembler.CreateInstance<Hasher>(new Dictionary<string, string>
-{
-    ["Algorithm"] = "Polynomial"
-}, data);
-```
-
-**System-tuned selection** — JigSaw profiles every candidate on the executing hardware and returns the fastest instance:
+JigSaw profiles every valid combination on the executing hardware and returns the fastest:
 
 ```csharp
 var hasher = Assembler.CreateInstanceForSystem<Hasher>(
@@ -147,7 +301,7 @@ Console.WriteLine($"Selected: {string.Join(", ", winner.Select(kv => $"{kv.Key}=
 // Selected: Algorithm=Span
 ```
 
-**System-tuned with a pinned constraint** — fix some keys and let JigSaw choose the rest:
+With a pinned constraint — fix some keys and let JigSaw choose the rest:
 
 ```csharp
 var hasher = Assembler.CreateInstanceForSystem<Hasher>(
@@ -157,7 +311,7 @@ var hasher = Assembler.CreateInstanceForSystem<Hasher>(
     constructorArgs: [data]);
 ```
 
-**System-tuned with explicit warmup and iteration control:**
+With explicit warmup and iteration control:
 
 ```csharp
 var hasher = Assembler.CreateInstanceForSystem<Hasher>(
@@ -169,7 +323,7 @@ var hasher = Assembler.CreateInstanceForSystem<Hasher>(
     constructorArgs: [data]);
 ```
 
-If a `[PuzzlePlace]` method takes arguments, provide them via `getArgsFor`:
+If a place method takes arguments, provide them via `getArgsFor`:
 
 ```csharp
 var hasher = Assembler.CreateInstanceForSystem<Hasher>(
@@ -192,7 +346,6 @@ var hasher = Assembler.CreateInstanceForSystem<Hasher>(
 SIMD availability, cache sizes, and memory bandwidth vary across hardware. An implementation that wins on a developer workstation may lose on a cloud VM. `CreateInstanceForSystem` profiles at process startup on the actual hardware and selects accordingly — no configuration required.
 
 ```csharp
-// At startup — profiled and assembled once
 _compressor = Assembler.CreateInstanceForSystem<Compressor>(
     getArgsFor:      m => [samplePayload],
     bestCombination: out _,
@@ -204,8 +357,6 @@ _compressor.Compress(buffer);
 
 ### User or configuration preferences
 
-When the choice is driven by a config file or user settings, it is known at startup and fixed for the process lifetime. JigSaw assembles the right type once and eliminates all subsequent branching:
-
 ```csharp
 var serializer = Assembler.CreateInstance<Serializer>(new Dictionary<string, string>
 {
@@ -216,9 +367,22 @@ var serializer = Assembler.CreateInstance<Serializer>(new Dictionary<string, str
 
 Every call to `Serialize()` thereafter is a direct method call with no conditional logic in the path.
 
-### Eliminating delegate indirection
+### Plugin architectures
 
-Storing `Func<T>` fields to avoid switch statements trades branch cost for indirect call cost. JigSaw eliminates both:
+`AllowStaticExternal` allows downstream packages to contribute implementations without a reference back to the declaring assembly. Combined with a `handshake`, you can enforce contracts on what those plugins are permitted to supply.
+
+```csharp
+// Core library declares the slot and the contract
+[PuzzlePlace(nameof(Render), allowStaticExternal: true, handshake: nameof(IsCompatible))]
+public abstract void Render(Scene scene);
+
+public static bool IsCompatible(MethodInfo m) =>
+    m.GetCustomAttribute<RendererApiVersionAttribute>()?.Version >= 3;
+
+// Plugin packages contribute [PuzzlePeice] methods — discovered automatically at runtime
+```
+
+### Eliminating delegate indirection
 
 ```csharp
 // Before — indirect call on every invocation
@@ -247,16 +411,17 @@ var pipeline = Assembler.CreateInstance<Pipeline>(new Dictionary<string, string>
 | Rule | Detail |
 |------|--------|
 | Base type must be `abstract` | JigSaw extends it with a sealed concrete subclass |
-| `[PuzzlePlace]` must be on an `abstract` method | Non-abstract placement throws at assembly time |
-| `[PuzzlePeice]` must match place | Zero matches throw at assembly time |
-| Pieces must share the declaring type, return type, and parameter types with their place | Mismatched signatures are silently skipped as non-candidates |
+| `[PuzzlePlace]` and `[PuzzleCornerPiece]` must be on `abstract` methods | Non-abstract placement throws at assembly time |
+| Exactly one `[PuzzlePeice]` must match per `[PuzzlePlace]` | Zero or multiple matches throw at assembly time |
+| Pieces must match their place's return type and parameter types | Mismatched signatures are silently skipped |
+| `[PuzzleCornerPiece]` mapping key must equal the pointer | When `allowStaticExternal` is `false` |
+| Handshake method must be `static bool` on the declaring type | Receives the candidate `MethodInfo`, returns `true` to accept |
+| Avoid primary constructors on base types | The C# compiler synthesizes capture fields (`<param>P`) that produce unpredictable IL. Use traditional constructors with explicit field assignment |
 | Assembly is cached | The same type + mapping combination is only built once per process |
 
 ---
 
 ## Introspection
-
-Inspect what puzzle places and pieces exist on a type without assembling it:
 
 ```csharp
 var puzzle = Assembler.GetJigSawPuzzle<Hasher>();
@@ -283,11 +448,12 @@ Place: ComputeHash
 
 ## How It Works
 
-1. **Reflection scan** — JigSaw reads `[PuzzlePlace]` and `[PuzzlePeice]` attributes on the base type and resolves which piece fills each place for the given mapping.
-2. **Type emission** — A sealed subclass is built with `TypeBuilder`. Constructors are mirrored from the base class so all existing construction patterns continue to work.
-3. **IL copy** — Rather than emitting a forwarding call, JigSaw copies the raw IL byte stream of the chosen piece directly into the override method, resolving all metadata tokens (methods, fields, types, strings, branches) into the new module. The JIT sees the body as local code and can inline freely.
-4. **Access grants** — The dynamic assembly declares `IgnoresAccessChecksTo` for the originating assembly so that private and internal members accessed by the copied IL remain accessible.
-5. **Cache** — The assembled `Type` is stored keyed on `FullName + mapping hash`. Repeated calls with the same mapping return the cached type instantly.
+1. **Reflection scan** — JigSaw reads `[PuzzlePlace]`, `[PuzzleCornerPiece]`, and `[PuzzlePeice]` attributes on the base type. If any place sets `allowStaticExternal: true`, referenced assemblies are also scanned for matching external pieces.
+2. **Handshake** — External piece candidates are passed to the declaring type's handshake method (if set). Candidates that return `false` are rejected before assembly begins.
+3. **Type emission** — A sealed subclass is built with `TypeBuilder`. Constructors are mirrored from the base class so all existing construction patterns continue to work.
+4. **IL copy** — Rather than emitting a forwarding call, JigSaw copies the raw IL byte stream of the chosen piece directly into the override method, resolving all metadata tokens (methods, fields, types, strings, branches) into the new module. The JIT sees the body as local code and can inline freely. Static external pieces use a forwarding call instead since they live in a separate module.
+5. **Access grants** — The dynamic assembly declares `IgnoresAccessChecksTo` for the originating assembly so that private and internal members accessed by the copied IL remain accessible.
+6. **Cache** — The assembled `Type` is stored keyed on `FullName + mapping hash`. Repeated calls with the same mapping return the cached type instantly. The cache can be disabled via `Assembler.Cache = false` (useful in tests).
 
 ---
 
@@ -324,6 +490,9 @@ T Assembler.CreateInstanceForSystem<T>(
 
 // Introspect available places and pieces without assembling
 Dictionary<MethodInfo, List<MethodInfo>> Assembler.GetJigSawPuzzle<T>()
+
+// Enable or disable the type cache (default: true)
+bool Assembler.Cache { get; set; }
 ```
 
 ---

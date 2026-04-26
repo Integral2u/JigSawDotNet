@@ -459,6 +459,8 @@ namespace JigSawDotNet
                 if (puzzlePlace == null) continue;
                 if (puzzlePlace.AllowStaticExternal) places.Add(place);
             }
+            if (places.Count == 0)
+                return localPieces;
             var classes = new List<Type>();
             foreach (var assembly in ReferencedAssemblies)
             {
