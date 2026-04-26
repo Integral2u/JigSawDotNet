@@ -139,21 +139,47 @@ namespace JigSawDotNet.Tests
 
         public static int SubtractInternal(int a, int b) => a - b;
     }
+
+    public abstract class InternalExternalTestOp
+    {
+        [PuzzlePlace("BoolOperation", true, "Verify")]
+        public abstract bool BoolOperation(bool value);
+        [PuzzlePeice("BoolOperation", "InternalExternal", "Internal")]
+        public static bool AlwaysTrue(bool value) => true;
+        public static bool Verify(MethodInfo mwthod) => true;
+    }
     // -------------------------------------------------------------------------
     // Tests
     // -------------------------------------------------------------------------
 
-    public class AssemblerTests
+    public class AssemblerTests : IDisposable
     {
         public AssemblerTests()
         {
             Assembler.Cache = false;
         }
-        public void Dispose() => Assembler.Cache = true; // restore default
+        void IDisposable.Dispose() 
+        {
+            Assembler.Cache = false;
+            Assembler.Cache = true;
+        }
         // -----------------------------------------------------------------
         // Assemble<T>
         // -----------------------------------------------------------------
 
+        [Fact]
+        public void InternalExternalTest()
+        {
+            var externalType = typeof(JigSawDotNetExternalTests.ExternalTestMethod);
+            Assert.NotNull(externalType);
+            var methods = externalType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.Contains(methods, m => m.Name == "Not");
+
+            var local = Assembler.CreateInstance<InternalExternalTestOp>(new Dictionary<string, string> { ["InternalExternal"] = "Internal" });
+            var external = Assembler.CreateInstance<InternalExternalTestOp>(new Dictionary<string, string> { ["InternalExternal"] = "External" });
+            Assert.True(local.BoolOperation(false));
+            Assert.True(external.BoolOperation(false));
+        }
         [Fact]
         public void CreateInstanceForSystem_CornerPeice()
         {

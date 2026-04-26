@@ -16,19 +16,26 @@ namespace JigSawDotNet
 {
     public record MethodReference(string Key, string FullyQualifiedStaticMethod);
     [AttributeUsage(AttributeTargets.Method, Inherited = false)]
-    public class PuzzlePlace(string pointer) : Attribute
+    public class PuzzlePlace(string pointer, bool allowStaticExternal = false, string? handshake = null) : Attribute
     {
         //The abstract method to place this method peice
         public string Pointer { get; init; } = pointer;
+        public string? Handshake { get; init; } = handshake;
+        public bool AllowStaticExternal { get; init; } = allowStaticExternal;
     }
     [AttributeUsage(AttributeTargets.Method, Inherited = false)] //Expect excptions if not used correctly
     public class PuzzleCornerPiece : Attribute
     {
         public string Pointer { get; init; }
         public IDictionary<string, string> KeyValues { get; set; } = new Dictionary<string, string>(); //(FullyQualifiedName id the goto but allow lazy in class definitions
-        public PuzzleCornerPiece(string pointer, params string[] keyValues)
+        public string? Handshake { get; init; }
+        public bool AllowStaticExternal { get; init; }
+        public PuzzleCornerPiece(string pointer, params string[] keyValues) : this(pointer, false, null, keyValues) { }
+        public PuzzleCornerPiece(string pointer, bool allowStaticExternal, string? handshake, params string[] keyValues)
         {
             Pointer = pointer;
+            AllowStaticExternal = allowStaticExternal;
+            Handshake = handshake;
             if (keyValues.Length % 2 != 0)
                 throw new ArgumentException("attribute values should be set in pairs");
             for (var i = 0; i < keyValues.Length; i += 2)
@@ -48,10 +55,24 @@ namespace JigSawDotNet
         //The condition Value to match to use this method peice
         public string Value { get; init; } = value;
     }
-    public static class Assembler
+
+public static class Assembler
     {
         private static bool _cache = true;
-        public static bool Cache { get => _cache; set { if (!value) AssemblableMappings.Clear(); _cache = value; } }
+        public static bool Cache 
+        { 
+            get => _cache;
+            set 
+            {
+                if (!value)
+                {
+                    AssemblableMappings.Clear();
+                    referencedAssemblies = null;
+                    ExternalPuzzlePeices = null;
+                }
+                _cache = value;
+            } 
+        }
         private static readonly Dictionary<string, Type> AssemblableMappings = [];
 
         public static Type Assemble<T>(Dictionary<string, string> mapping)
@@ -66,11 +87,10 @@ namespace JigSawDotNet
                     if (string.IsNullOrWhiteSpace(puzzlePeice.Key)) continue;
                     if (!mapping.TryGetValue(puzzlePeice.Key, out var value)) continue;
                     if (string.IsNullOrWhiteSpace(value) || value != puzzlePeice.Value) continue;
-                    if (method.DeclaringType == candidate.DeclaringType
-                        && method.ReturnType == candidate.ReturnType
-                        && method.GetParameters()
-                                 .Select(p => p.ParameterType)
-                                 .SequenceEqual(candidate.GetParameters().Select(p => p.ParameterType)))
+                    if (method.ReturnType == candidate.ReturnType
+                    && method.GetParameters()
+                             .Select(p => p.ParameterType)
+                             .SequenceEqual(candidate.GetParameters().Select(p => p.ParameterType)))
                         yield return candidate;
                 }
             }
@@ -187,10 +207,14 @@ namespace JigSawDotNet
             if (Cache && AssemblableMappings.TryGetValue(fullName, out var assembled)) return assembled;
 
             var puzzlePlaces = classType.GetMethods().Where(m => m.GetCustomAttributes(typeof(PuzzlePlace), true).Length != 0);
-            var puzzleCornerPlaces = classType.GetMethods().Where(m => m.GetCustomAttributes(typeof(PuzzleCornerPiece), true).Length != 0);
+            var puzzleCornerPlaces = classType.GetMethods().Where(m => m.GetCustomAttributes(typeof(PuzzleCornerPiece), true).Length != 0);                      
+            
             if (!puzzlePlaces.Any() && !puzzleCornerPlaces.Any()) return classType;
+            
             var puzzlePeices = classType.GetMethods().Where(m => m.GetCustomAttributes(typeof(PuzzlePeice), true).Length != 0);
-
+            //Add external puzzle peices for places that have AllowStaticExternal = true
+puzzlePeices = ApplyExternalPuzzlePeices(puzzlePeices, puzzlePlaces, puzzleCornerPlaces, mapping);
+           
             var buildList = new List<(MethodInfo Destination, MethodInfo Source)>();
             foreach (var place in puzzlePlaces)
             {
@@ -256,11 +280,45 @@ namespace JigSawDotNet
             return result;
         }
 
+
+
         private static MethodInfo GetPuzzleCornerPeiceFor(MethodInfo place, Dictionary<string, string> mapping, PuzzleCornerPiece puzzleCornerPlace)
         {
             if (place.DeclaringType == null) throw new InvalidOperationException($"Method {place.Name} DeclaringType is null.");
             if (!mapping.TryGetValue(puzzleCornerPlace.Pointer, out var mapValue)) throw new InvalidOperationException($"Method {place.Name} has no value set for {puzzleCornerPlace.Pointer}");
-            if (!puzzleCornerPlace.KeyValues.TryGetValue(mapValue, out var mapTarget)) throw new InvalidOperationException($"Method {place.Name} has no target set for {puzzleCornerPlace.Pointer} with option {mapValue}");
+            var keyValues = new Dictionary<string, string>(puzzleCornerPlace.KeyValues);
+
+            if (puzzleCornerPlace.AllowStaticExternal && ExternalPuzzlePeices is not null)
+            {
+                foreach (var external in ExternalPuzzlePeices)
+                {
+                    var externalPiece = external.GetCustomAttribute<PuzzlePeice>();
+                    if (externalPiece == null) continue;
+                    if (externalPiece.Pointer != puzzleCornerPlace.Pointer) continue;
+                    if (string.IsNullOrWhiteSpace(externalPiece.Key)) continue;
+                    if (string.IsNullOrWhiteSpace(externalPiece.Value)) continue;
+
+                    var externalType = external.DeclaringType;
+                    if (externalType == null) continue;
+                    if (externalType == place.DeclaringType) continue;
+
+                    if (place.ReturnType != external.ReturnType) continue;
+                    var placeParams = place.GetParameters().Select(p => p.ParameterType).ToArray();
+                    var externalParams = external.GetParameters().Select(p => p.ParameterType).ToArray();
+                    if (!placeParams.SequenceEqual(externalParams)) continue;
+
+                    var handshake = puzzleCornerPlace.Handshake;
+                    if (!string.IsNullOrWhiteSpace(handshake))
+                    {
+                        var handshakeMethod = externalType.GetMethod(handshake, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+                        if (handshakeMethod == null) continue;
+                        if (!VerifyHandshake(handshakeMethod)) continue;
+                    }
+
+                    keyValues[externalPiece.Key] = externalPiece.Value;
+                }
+            }
+            if (!keyValues.TryGetValue(mapValue, out var mapTarget)) throw new InvalidOperationException($"Method {place.Name} has no target set for {puzzleCornerPlace.Pointer} with option {mapValue}");
            
             int lastDot = mapTarget.LastIndexOf('.');
             if (lastDot < 0)
@@ -290,6 +348,179 @@ namespace JigSawDotNet
                     return method;
             }
             throw new InvalidOperationException($"Method {place.Name} has no valid static method match to use.");
+        }        
+        private static IEnumerable<Assembly>? referencedAssemblies = null;
+        private static IEnumerable<Assembly> ReferencedAssemblies => referencedAssemblies ??= GetAllReferencedAssemblies();
+        private static IEnumerable<Assembly> GetAllReferencedAssemblies()
+        {
+            var visited = new HashSet<string>();
+            var stack = new Stack<Assembly>();
+            var assembly = Assembly.GetEntryAssembly() ?? Assembly.GetCallingAssembly();
+            if (assembly == null)
+            {
+                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    if (asm.IsDynamic || string.IsNullOrWhiteSpace(asm.Location)) continue;
+                    visited.Add(asm.FullName);
+                    yield return asm;
+                }
+                yield break;
+            }
+            stack.Push(assembly);
+            while (stack.Count > 0)
+            {
+                var asm = stack.Pop();
+                if (!visited.Add(asm.FullName)) continue;
+                yield return asm;
+
+                foreach (var reference in asm.GetReferencedAssemblies())
+                {
+                    try
+                    {
+                        stack.Push(Assembly.Load(reference));
+                    }
+                    catch { }
+                }
+            }
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                if (asm.IsDynamic || string.IsNullOrWhiteSpace(asm.Location)) continue;
+                if (!visited.Contains(asm.FullName))
+                {
+                    visited.Add(asm.FullName);
+                    yield return asm;
+                }
+            }
+        }
+        private static IEnumerable<MethodInfo>? ExternalPuzzlePeices;
+        private static IEnumerable<MethodInfo> ApplyExternalPuzzlePeices(IEnumerable<MethodInfo> puzzlePeices, IEnumerable<MethodInfo> puzzlePlaces, IEnumerable<MethodInfo> puzzleCornerPeices, Dictionary<string, string> mapping)
+        {
+            var localPieces = puzzlePeices.ToList();
+            var mappingKeyValues = mapping.Select(kv => $"{kv.Key}|{kv.Value}").ToHashSet();
+            var existingKeyValues = new HashSet<string>(localPieces
+                .Select(p => p.GetCustomAttribute<PuzzlePeice>())
+                .Where(a => a != null)
+                .Select(a => $"{a!.Key}|{a.Value}"));
+
+            IEnumerable<MethodInfo> externalPieces;
+            if (ExternalPuzzlePeices != null)
+            {
+                externalPieces = ExternalPuzzlePeices
+                    .Where(e =>
+                    {
+                        var attr = e.GetCustomAttribute<PuzzlePeice>();
+                        var key = $"{attr?.Key}|{attr?.Value}";
+                        return attr != null && !existingKeyValues.Contains(key) && mappingKeyValues.Contains(key);
+                    });
+                return localPieces.Concat(externalPieces).ToList();
+            }
+            var resultPeices = new List<MethodInfo>(localPieces);
+            var places = new List<MethodInfo>();
+            foreach(var place in puzzlePlaces)
+            {
+                var puzzlePlace = place.GetCustomAttribute<PuzzlePlace>();
+                if (puzzlePlace == null) continue;
+                if (puzzlePlace.AllowStaticExternal) places.Add(place);
+            }
+            foreach (var place in puzzleCornerPeices)
+            {
+                var puzzlePlace = place.GetCustomAttribute<PuzzleCornerPiece>();
+                if (puzzlePlace == null) continue;
+                if (puzzlePlace.AllowStaticExternal) places.Add(place);
+            }
+            var classes = new List<Type>();
+            foreach(var assembly in ReferencedAssemblies)
+            {
+                if (assembly.IsDynamic) continue;
+                try {
+                    foreach(var t in assembly.GetTypes().Where(t => t.IsClass && (t.IsAbstract == false || (t.IsAbstract && t.IsSealed))))
+                    {
+                        classes.Add(t);
+                    }
+                } catch { }
+            }
+            foreach (var type in classes)
+            {
+                var peices = type.GetMethods().Where(m => m.GetCustomAttributes(typeof(PuzzlePeice), true).Length != 0);
+                foreach(var peice in peices)
+                {
+                    var puzzlePeice = peice.GetCustomAttribute<PuzzlePeice>();
+                    if (puzzlePeice == null) continue;
+                    if (resultPeices.Contains(peice)) continue;
+                    foreach(var place in places)
+                    {
+                        if (place.DeclaringType == peice.DeclaringType) continue;
+                        var puzzlePlace = peice.GetCustomAttribute<PuzzlePlace>();
+                        if (puzzlePlace != null) 
+                        {
+                            if (string.IsNullOrWhiteSpace(puzzlePeice.Key)) continue;
+                            if (puzzlePeice.Pointer != puzzlePlace.Pointer) continue;
+                            if (place.ReturnType == peice.ReturnType
+                            && place.GetParameters()
+                                     .Select(p => p.ParameterType)
+                                     .SequenceEqual(peice.GetParameters().Select(p => p.ParameterType)))
+                            {
+                                if (!string.IsNullOrWhiteSpace(puzzlePlace.Handshake))
+                                {
+                                    if (place.DeclaringType == null) continue;
+                                    MethodInfo? foundMethod = place.DeclaringType.GetMethod(puzzlePlace.Handshake, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance);
+                                    if (foundMethod is null) continue;
+                                    var handshakeResult = VerifyHandshake(foundMethod);
+                                    if (!handshakeResult) continue;
+                                }
+                                resultPeices.Add(peice);
+                            }
+                        }
+                        var puzzleCornerPiece = peice.GetCustomAttribute<PuzzleCornerPiece>();
+                        if (puzzleCornerPiece != null)
+                        {
+                            if (string.IsNullOrWhiteSpace(puzzlePeice.Key)) continue;
+                            if (puzzlePeice.Pointer != puzzleCornerPiece.Pointer) continue;
+                            if (place.ReturnType == peice.ReturnType
+                            && place.GetParameters()
+                                     .Select(p => p.ParameterType)
+                                     .SequenceEqual(peice.GetParameters().Select(p => p.ParameterType)))
+                            {
+                                if (!string.IsNullOrWhiteSpace(puzzleCornerPiece.Handshake))
+                                {
+                                    if (place.DeclaringType == null) continue;
+                                    MethodInfo? foundMethod = place.DeclaringType.GetMethod(puzzleCornerPiece.Handshake, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance);
+                                    if (foundMethod is null) continue;
+                                    var handshakeResult = VerifyHandshake(foundMethod);
+                                    if (!handshakeResult) continue;
+                                }
+                                resultPeices.Add(peice);
+                            }
+                        }
+                        else
+                        {
+                            if (string.IsNullOrWhiteSpace(puzzlePeice.Key)) continue;
+                            if (puzzlePeice.Pointer != place.Name) continue;
+                            if (place.ReturnType != peice.ReturnType) continue;
+                            if (!place.GetParameters().Select(p => p.ParameterType).SequenceEqual(peice.GetParameters().Select(p => p.ParameterType))) continue;
+
+                            var handshake = place.GetCustomAttribute<PuzzlePlace>()?.Handshake
+                                ?? place.GetCustomAttribute<PuzzleCornerPiece>()?.Handshake;
+                            if (!string.IsNullOrWhiteSpace(handshake))
+                            {
+                                if (place.DeclaringType == null) continue;
+                                var foundMethod = place.DeclaringType.GetMethod(handshake, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance);
+                                if (foundMethod is null) continue;
+                                if (!VerifyHandshake(foundMethod)) continue;
+                            }
+                            resultPeices.Add(peice);
+                        }
+                    }
+                }
+            }
+            return ExternalPuzzlePeices = resultPeices;
+        }
+        private static bool VerifyHandshake(MethodInfo handshakeMethod)
+        {
+            if (handshakeMethod.ReturnType != typeof(bool)) return false;
+            if (handshakeMethod.GetParameters().Length != 1 || handshakeMethod.GetParameters()[0].ParameterType != typeof(MethodInfo)) return false;
+            var result = (bool)handshakeMethod.Invoke(null, [handshakeMethod])!;
+            return result;
         }
 
         public static T CreateInstance<T>(Dictionary<string, string> mapping, params object?[]? args) => (T)Activator.CreateInstance(Assemble<T>(mapping), args)!;
@@ -356,7 +587,7 @@ namespace JigSawDotNet
                 .ToList();
 
             if (puzzlePlaces.Count == 0 && puzzleCornerPlaces.Count == 0)
-                throw new InvalidOperationException($"Type {classType.FullName} has no [{nameof(PuzzlePlace)}] or [{nameof(PuzzleCornerPiece)}] methods to benchmark.");
+                throw new InvalidOperationException($"Type {classType.FullName} has no [{nameof(PuzzlePlace)}], [{nameof(PuzzleCornerPiece)}] methods to benchmark.");
 
             // Build combination space from free (un-pinned) keys
             var byKey = classType.GetMethods()
@@ -373,6 +604,7 @@ namespace JigSawDotNet
                     byKey[options.Pointer].Add(option.Key); //The value points to actual method
                 }
             }
+
             foreach (var key in pinnedMapping.Keys)
                 byKey.Remove(key);
 

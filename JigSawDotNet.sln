@@ -1,13 +1,15 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
-VisualStudioVersion = 17.14.36623.8 d17.14
+VisualStudioVersion = 17.14.36623.8
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JigSawDotNet", "JigSawDotNet\JigSawDotNet.csproj", "{2C1D0714-27BB-4522-87EC-8E7EDC48D2C7}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sandbox", "Sandbox\Sandbox.csproj", "{AE9A2680-E291-42E2-ACD3-0B53A5565224}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JigSawDotNetTests", "JigSawDotNetTests\JigSawDotNetTests.csproj", "{5673633F-F5E6-4607-9BA2-01B68F818C7E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JigSawDotNetExternalTests", "JigSawDotNetExternalTests\JigSawDotNetExternalTests.csproj", "{816F3F11-131A-4F7F-BB37-F4CB94284F0C}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -27,6 +29,10 @@ Global
 		{5673633F-F5E6-4607-9BA2-01B68F818C7E}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{5673633F-F5E6-4607-9BA2-01B68F818C7E}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{5673633F-F5E6-4607-9BA2-01B68F818C7E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{816F3F11-131A-4F7F-BB37-F4CB94284F0C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{816F3F11-131A-4F7F-BB37-F4CB94284F0C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{816F3F11-131A-4F7F-BB37-F4CB94284F0C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{816F3F11-131A-4F7F-BB37-F4CB94284F0C}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
