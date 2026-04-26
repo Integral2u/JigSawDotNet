@@ -56,13 +56,13 @@ namespace JigSawDotNet
         public string Value { get; init; } = value;
     }
 
-public static class Assembler
+    public static class Assembler
     {
         private static bool _cache = true;
-        public static bool Cache 
-        { 
+        public static bool Cache
+        {
             get => _cache;
-            set 
+            set
             {
                 if (!value)
                 {
@@ -71,7 +71,7 @@ public static class Assembler
                     ExternalPuzzlePeices = null;
                 }
                 _cache = value;
-            } 
+            }
         }
         private static readonly Dictionary<string, Type> AssemblableMappings = [];
 
@@ -207,14 +207,14 @@ public static class Assembler
             if (Cache && AssemblableMappings.TryGetValue(fullName, out var assembled)) return assembled;
 
             var puzzlePlaces = classType.GetMethods().Where(m => m.GetCustomAttributes(typeof(PuzzlePlace), true).Length != 0);
-            var puzzleCornerPlaces = classType.GetMethods().Where(m => m.GetCustomAttributes(typeof(PuzzleCornerPiece), true).Length != 0);                      
-            
+            var puzzleCornerPlaces = classType.GetMethods().Where(m => m.GetCustomAttributes(typeof(PuzzleCornerPiece), true).Length != 0);
+
             if (!puzzlePlaces.Any() && !puzzleCornerPlaces.Any()) return classType;
-            
+
             var puzzlePeices = classType.GetMethods().Where(m => m.GetCustomAttributes(typeof(PuzzlePeice), true).Length != 0);
             //Add external puzzle peices for places that have AllowStaticExternal = true
-puzzlePeices = ApplyExternalPuzzlePeices(puzzlePeices, puzzlePlaces, puzzleCornerPlaces, mapping);
-           
+            puzzlePeices = ApplyExternalPuzzlePeices(puzzlePeices, puzzlePlaces, puzzleCornerPlaces, mapping);
+
             var buildList = new List<(MethodInfo Destination, MethodInfo Source)>();
             foreach (var place in puzzlePlaces)
             {
@@ -233,7 +233,7 @@ puzzlePeices = ApplyExternalPuzzlePeices(puzzlePeices, puzzlePlaces, puzzleCorne
                 if (!place.IsAbstract) throw new InvalidOperationException($"Method {place.Name} must be abstract to use [{nameof(PuzzlePlace)}].");
                 var puzzleCornerPlace = place.GetCustomAttribute<PuzzleCornerPiece>();
                 if (puzzleCornerPlace == null) continue; //Never the case                
-                var peice = GetPuzzleCornerPeiceFor(place, mapping, puzzleCornerPlace) ?? throw new InvalidOperationException($"Method {place.Name} has no valid method to use.");
+                var peice = GetPuzzleCornerPeiceFor(place, mapping) ?? throw new InvalidOperationException($"Method {place.Name} has no valid method to use.");
                 buildList.Add((place, peice));
             }
             // Define the new class extending BaseClass
@@ -282,73 +282,103 @@ puzzlePeices = ApplyExternalPuzzlePeices(puzzlePeices, puzzlePlaces, puzzleCorne
 
 
 
-        private static MethodInfo GetPuzzleCornerPeiceFor(MethodInfo place, Dictionary<string, string> mapping, PuzzleCornerPiece puzzleCornerPlace)
+        private static MethodInfo GetPuzzleCornerPeiceFor(MethodInfo place, Dictionary<string, string> mapping)
         {
-            if (place.DeclaringType == null) throw new InvalidOperationException($"Method {place.Name} DeclaringType is null.");
-            if (!mapping.TryGetValue(puzzleCornerPlace.Pointer, out var mapValue)) throw new InvalidOperationException($"Method {place.Name} has no value set for {puzzleCornerPlace.Pointer}");
-            var keyValues = new Dictionary<string, string>(puzzleCornerPlace.KeyValues);
+            if (place.DeclaringType == null)
+                throw new InvalidOperationException($"Method {place.Name} DeclaringType is null.");
 
-            if (puzzleCornerPlace.AllowStaticExternal && ExternalPuzzlePeices is not null)
+            var attr = place.GetCustomAttribute<PuzzleCornerPiece>()!;
+            var pointer = attr.Pointer;
+            var handshake = attr.Handshake;
+            var keyValues = new Dictionary<string, string>(attr.KeyValues);
+            var allowExternal = attr.AllowStaticExternal;  // ← use actual value, not hardcoded true
+
+            // External scan — only when opted in
+            if (allowExternal)
             {
-                foreach (var external in ExternalPuzzlePeices)
+                foreach (var type in ReferencedAssemblies
+                             .Where(a => !a.IsDynamic)
+                             .SelectMany(a => { try { return a.GetTypes(); } catch { return []; } })
+                             .Where(t => t.IsClass && (!t.IsAbstract || t.IsSealed)))
                 {
-                    var externalPiece = external.GetCustomAttribute<PuzzlePeice>();
-                    if (externalPiece == null) continue;
-                    if (externalPiece.Pointer != puzzleCornerPlace.Pointer) continue;
-                    if (string.IsNullOrWhiteSpace(externalPiece.Key)) continue;
-                    if (string.IsNullOrWhiteSpace(externalPiece.Value)) continue;
-
-                    var externalType = external.DeclaringType;
-                    if (externalType == null) continue;
-                    if (externalType == place.DeclaringType) continue;
-
-                    if (place.ReturnType != external.ReturnType) continue;
-                    var placeParams = place.GetParameters().Select(p => p.ParameterType).ToArray();
-                    var externalParams = external.GetParameters().Select(p => p.ParameterType).ToArray();
-                    if (!placeParams.SequenceEqual(externalParams)) continue;
-
-                    var handshake = puzzleCornerPlace.Handshake;
-                    if (!string.IsNullOrWhiteSpace(handshake))
+                    foreach (var external in type.GetMethods()
+                                 .Where(m => m.GetCustomAttribute<PuzzlePeice>() is not null))
                     {
-                        var handshakeMethod = externalType.GetMethod(handshake, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-                        if (handshakeMethod == null) continue;
-                        if (!VerifyHandshake(handshakeMethod)) continue;
+                        var externalPiece = external.GetCustomAttribute<PuzzlePeice>()!;
+                        if (externalPiece.Pointer != pointer) continue;
+                        if (string.IsNullOrWhiteSpace(externalPiece.Key)) continue;
+                        if (external.DeclaringType == place.DeclaringType) continue;
+                        if (place.ReturnType != external.ReturnType) continue;
+                        if (!place.GetParameters().Select(p => p.ParameterType)
+                                  .SequenceEqual(external.GetParameters().Select(p => p.ParameterType))) continue;
+                        if (!string.IsNullOrWhiteSpace(handshake))
+                        {
+                            var handshakeMethod = place.DeclaringType.GetMethod(
+                                handshake, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+                            if (handshakeMethod == null || !VerifyHandshake(handshakeMethod)) continue;
+                        }
+                        if (mapping.TryGetValue(externalPiece.Key, out var mappingValue)
+                            && mappingValue == externalPiece.Value)
+                            return external;
                     }
-
-                    keyValues[externalPiece.Key] = externalPiece.Value;
                 }
+
+                // External scan found nothing — fall back to keyValues lookup by mapping value
+                var externalFallback = mapping.FirstOrDefault(kv => keyValues.ContainsKey(kv.Value));
+                if (externalFallback.Key != null)
+                {
+                    var mapTarget = ResolveMethodTarget(place, keyValues[externalFallback.Value]);
+                    if (mapTarget != null) return mapTarget;
+                }
+
+                throw new InvalidOperationException(
+                    $"Method {place.Name} has no valid piece for pointer '{pointer}'. " +
+                    $"Available options: [{string.Join(", ", keyValues.Keys)}]");
             }
-            if (!keyValues.TryGetValue(mapValue, out var mapTarget)) throw new InvalidOperationException($"Method {place.Name} has no target set for {puzzleCornerPlace.Pointer} with option {mapValue}");
-           
+            else
+            {
+                // No external — mapping key must be the pointer name
+                if (!mapping.TryGetValue(pointer, out var mapValue))
+                    throw new InvalidOperationException(
+                        $"Method {place.Name} has no value set for '{pointer}'. " +
+                        $"Available options: [{string.Join(", ", keyValues.Keys)}]");
+
+                if (!keyValues.TryGetValue(mapValue, out var mapTarget))
+                    throw new InvalidOperationException(
+                        $"Method {place.Name} has no target for option '{mapValue}' under '{pointer}'. " +
+                        $"Available options: [{string.Join(", ", keyValues.Keys)}]");
+
+                var resolved = ResolveMethodTarget(place, mapTarget);
+                return resolved ?? throw new InvalidOperationException(
+                    $"Method {place.Name} could not resolve method '{mapTarget}'.");
+            }
+        }
+
+        // Extracted helper — resolves "MethodName" or "Full.Type.Name.MethodName" to a MethodInfo
+        private static MethodInfo? ResolveMethodTarget(MethodInfo place, string mapTarget)
+        {
             int lastDot = mapTarget.LastIndexOf('.');
             if (lastDot < 0)
-            {
-                mapTarget = $"{place.DeclaringType.FullName}.{mapTarget}";
-                lastDot = mapTarget.LastIndexOf('.');
-            }
+                mapTarget = $"{place.DeclaringType!.FullName}.{mapTarget}";
 
+            lastDot = mapTarget.LastIndexOf('.');
             string typeName = mapTarget[..lastDot];
             string methodName = mapTarget[(lastDot + 1)..];
-
 
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
                 var type = asm.GetType(typeName);
                 if (type is null) continue;
-
-                var method = type.GetMethod(
-                    methodName,
+                var method = type.GetMethod(methodName,
                     BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-
                 if (method is not null
                     && method.ReturnType == place.ReturnType
-                    && method.GetParameters()
-                             .Select(p => p.ParameterType)
+                    && method.GetParameters().Select(p => p.ParameterType)
                              .SequenceEqual(place.GetParameters().Select(p => p.ParameterType)))
                     return method;
             }
-            throw new InvalidOperationException($"Method {place.Name} has no valid static method match to use.");
-        }        
+            return null;
+        }
         private static IEnumerable<Assembly>? referencedAssemblies = null;
         private static IEnumerable<Assembly> ReferencedAssemblies => referencedAssemblies ??= GetAllReferencedAssemblies();
         private static IEnumerable<Assembly> GetAllReferencedAssemblies()
@@ -392,8 +422,8 @@ puzzlePeices = ApplyExternalPuzzlePeices(puzzlePeices, puzzlePlaces, puzzleCorne
                 }
             }
         }
-        private static IEnumerable<MethodInfo>? ExternalPuzzlePeices;
-        private static IEnumerable<MethodInfo> ApplyExternalPuzzlePeices(IEnumerable<MethodInfo> puzzlePeices, IEnumerable<MethodInfo> puzzlePlaces, IEnumerable<MethodInfo> puzzleCornerPeices, Dictionary<string, string> mapping)
+        private static List<MethodInfo>? ExternalPuzzlePeices;
+        private static List<MethodInfo> ApplyExternalPuzzlePeices(IEnumerable<MethodInfo> puzzlePeices, IEnumerable<MethodInfo> puzzlePlaces, IEnumerable<MethodInfo> puzzleCornerPeices, Dictionary<string, string> mapping)
         {
             var localPieces = puzzlePeices.ToList();
             var mappingKeyValues = mapping.Select(kv => $"{kv.Key}|{kv.Value}").ToHashSet();
@@ -412,11 +442,12 @@ puzzlePeices = ApplyExternalPuzzlePeices(puzzlePeices, puzzlePlaces, puzzleCorne
                         var key = $"{attr?.Key}|{attr?.Value}";
                         return attr != null && !existingKeyValues.Contains(key) && mappingKeyValues.Contains(key);
                     });
-                return localPieces.Concat(externalPieces).ToList();
+                var result = localPieces.Concat(externalPieces).ToList();
+                return result;
             }
             var resultPeices = new List<MethodInfo>(localPieces);
             var places = new List<MethodInfo>();
-            foreach(var place in puzzlePlaces)
+            foreach (var place in puzzlePlaces)
             {
                 var puzzlePlace = place.GetCustomAttribute<PuzzlePlace>();
                 if (puzzlePlace == null) continue;
@@ -429,29 +460,30 @@ puzzlePeices = ApplyExternalPuzzlePeices(puzzlePeices, puzzlePlaces, puzzleCorne
                 if (puzzlePlace.AllowStaticExternal) places.Add(place);
             }
             var classes = new List<Type>();
-            foreach(var assembly in ReferencedAssemblies)
+            foreach (var assembly in ReferencedAssemblies)
             {
                 if (assembly.IsDynamic) continue;
-                try {
-                    foreach(var t in assembly.GetTypes().Where(t => t.IsClass && (t.IsAbstract == false || (t.IsAbstract && t.IsSealed))))
+                try
+                {
+                    foreach (var t in assembly.GetTypes().Where(t => t.IsClass && (t.IsAbstract == false || (t.IsAbstract && t.IsSealed))))
                     {
                         classes.Add(t);
                     }
-                } catch { }
+                }
+                catch { }
             }
             foreach (var type in classes)
             {
                 var peices = type.GetMethods().Where(m => m.GetCustomAttributes(typeof(PuzzlePeice), true).Length != 0);
-                foreach(var peice in peices)
+                foreach (var peice in peices)
                 {
                     var puzzlePeice = peice.GetCustomAttribute<PuzzlePeice>();
                     if (puzzlePeice == null) continue;
                     if (resultPeices.Contains(peice)) continue;
-                    foreach(var place in places)
+                    foreach (var place in places)
                     {
-                        if (place.DeclaringType == peice.DeclaringType) continue;
                         var puzzlePlace = peice.GetCustomAttribute<PuzzlePlace>();
-                        if (puzzlePlace != null) 
+                        if (puzzlePlace != null)
                         {
                             if (string.IsNullOrWhiteSpace(puzzlePeice.Key)) continue;
                             if (puzzlePeice.Pointer != puzzlePlace.Pointer) continue;
@@ -574,7 +606,18 @@ puzzlePeices = ApplyExternalPuzzlePeices(puzzlePeices, puzzlePlaces, puzzleCorne
                         })));
             }
             var classType = typeof(T);
+            // Detect synthesized primary constructor capture fields
+            var synthesizedFields = classType
+                .GetFields(BindingFlags.Instance | BindingFlags.NonPublic)
+                .Where(f => f.Name.StartsWith('<') && f.Name.EndsWith(">P"))
+                .ToList();
 
+            if (synthesizedFields.Count > 0)
+                throw new InvalidOperationException(
+                    $"Type {classType.FullName} uses a primary constructor with captured parameters " +
+                    $"({string.Join(", ", synthesizedFields.Select(f => f.Name))}). " +
+                    $"JigSaw requires traditional constructors on base types to ensure predictable IL. " +
+                    $"Move field initialization into a regular constructor body.");
             // Pre-compute args for each PuzzlePlace once — method signatures don't
             // change between combinations, only which piece fills them does
             var puzzlePlaces = classType.GetMethods()
@@ -595,7 +638,7 @@ puzzlePeices = ApplyExternalPuzzlePeices(puzzlePeices, puzzlePlaces, puzzleCorne
                 .Where(a => a is not null)
                 .GroupBy(a => a!.Key)
                 .ToDictionary(g => g.Key, g => g.Select(a => a!.Value).Distinct().ToList());
-            foreach( var (Method, Args) in puzzleCornerPlaces)
+            foreach (var (Method, Args) in puzzleCornerPlaces)
             {
                 var options = Method.GetCustomAttribute<PuzzleCornerPiece>() ?? throw new NullReferenceException($"{Method.Name} is missing attribute [{nameof(PuzzleCornerPiece)}]");
                 if (!byKey.ContainsKey(options.Pointer)) byKey.Add(options.Pointer, []);

@@ -145,8 +145,16 @@ namespace JigSawDotNet.Tests
         [PuzzlePlace("BoolOperation", true, "Verify")]
         public abstract bool BoolOperation(bool value);
         [PuzzlePeice("BoolOperation", "InternalExternal", "Internal")]
-        public static bool AlwaysTrue(bool value) => true;
-        public static bool Verify(MethodInfo mwthod) => true;
+        public static bool AlwaysTrue(bool _) => true;
+        public static bool Verify(MethodInfo _) => true;
+    }
+
+    public abstract class InternalExternalWithCornerPeiceTestOp
+    {
+        [PuzzleCornerPiece("BoolOperation", true, "Verify", "Internal", "AlwaysTrue")]
+        public abstract bool BoolOperation(bool value);
+        public static bool AlwaysTrue(bool _) => true;
+        public static bool Verify(MethodInfo _) => true;
     }
     // -------------------------------------------------------------------------
     // Tests
@@ -177,6 +185,19 @@ namespace JigSawDotNet.Tests
 
             var local = Assembler.CreateInstance<InternalExternalTestOp>(new Dictionary<string, string> { ["InternalExternal"] = "Internal" });
             var external = Assembler.CreateInstance<InternalExternalTestOp>(new Dictionary<string, string> { ["InternalExternal"] = "External" });
+            Assert.True(local.BoolOperation(false));
+            Assert.True(external.BoolOperation(false));
+        }
+        [Fact]
+        public void InternalExternalWithCornerPeiceTest()
+        {
+            var externalType = typeof(JigSawDotNetExternalTests.ExternalTestMethod);
+            Assert.NotNull(externalType);
+            var methods = externalType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.Contains(methods, m => m.Name == "Not");
+
+            var local = Assembler.CreateInstance<InternalExternalWithCornerPeiceTestOp>(new Dictionary<string, string> { ["InternalExternal"] = "Internal" });
+            var external = Assembler.CreateInstance<InternalExternalWithCornerPeiceTestOp>(new Dictionary<string, string> { ["InternalExternal"] = "External" });
             Assert.True(local.BoolOperation(false));
             Assert.True(external.BoolOperation(false));
         }
