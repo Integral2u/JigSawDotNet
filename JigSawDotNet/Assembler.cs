@@ -173,14 +173,50 @@ namespace JigSawDotNet
                         new CustomAttributeBuilder(attr.Constructor, ctorArgs));
                 }
             }
-            static void DefineConstructor(TypeBuilder typeBuilder, Type baseType, Type[] constructorArgTypes)
+static void DefineConstructor(TypeBuilder typeBuilder, Type baseType, Type[] constructorArgTypes)
             {
+                // Console.Error.WriteLine($"[JigSaw] DefineConstructor({baseType.Name})");
+                
                 // Get the matching constructor from the base class
-                ConstructorInfo baseCtor = baseType.GetConstructor(
+                ConstructorInfo? baseCtor = baseType.GetConstructor(
                     BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
                     null,
                     constructorArgTypes,
-                    null)!;
+                    null);
+                
+                if (baseCtor == null)
+                {
+                    // Fallback: search all constructors
+                    var allCtors = baseType.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                    foreach (var c in allCtors)
+                    {
+                        var ps = c.GetParameters();
+                        if (ps.Length == constructorArgTypes.Length)
+                        {
+                            bool match = true;
+                            for (int i = 0; i < ps.Length; i++)
+                            {
+                                if (ps[i].ParameterType != constructorArgTypes[i])
+                                {
+                                    match = false;
+                                    break;
+                                }
+                            }
+                            if (match)
+                            {
+                                baseCtor = c;
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                if (baseCtor == null)
+                {
+                    throw new InvalidOperationException(
+                        $"DefineConstructor: No matching constructor found on {baseType.FullName} " +
+                        $"with parameters: [{string.Join(", ", constructorArgTypes.Select(t => t.Name))}]");
+                }
 
                 // Define a constructor with the same parameter types
                 var ctorBuilder = typeBuilder.DefineConstructor(
@@ -189,7 +225,7 @@ namespace JigSawDotNet
                     constructorArgTypes);
 
                 var il = ctorBuilder.GetILGenerator();
-                il.Emit(OpCodes.Ldarg_0);               // load 'this'
+il.Emit(OpCodes.Ldarg_0);               // load 'this'
 
                 // Load each constructor argument
                 for (int i = 0; i < constructorArgTypes.Length; i++)
@@ -247,7 +283,7 @@ namespace JigSawDotNet
             ModuleBuilder moduleBuilder = assemblyBuilder.DefineDynamicModule("MainModule");
             var typeName = $"{classType.Name}{mapping.GetHashCode()}";
             TypeBuilder typeBuilder = moduleBuilder.DefineType(typeName, TypeAttributes.Sealed | TypeAttributes.Public, typeof(T));
-            var constructors = classType.GetConstructors(BindingFlags.Instance | BindingFlags.Public);
+            var constructors = classType.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
             if (constructors.Length == 0) DefineConstructor(typeBuilder, classType, []);
             foreach (var constructor in constructors)
                 DefineConstructor(typeBuilder, classType, [.. constructor.GetParameters().Select(p => p.ParameterType)]);
@@ -381,46 +417,55 @@ namespace JigSawDotNet
         }
         private static IEnumerable<Assembly>? referencedAssemblies = null;
         private static IEnumerable<Assembly> ReferencedAssemblies => referencedAssemblies ??= GetAllReferencedAssemblies();
+        
         private static IEnumerable<Assembly> GetAllReferencedAssemblies()
         {
+            // Scan AppDomain for already loaded assemblies
             var visited = new HashSet<string>();
-            var stack = new Stack<Assembly>();
-            var assembly = Assembly.GetEntryAssembly() ?? Assembly.GetCallingAssembly();
-            if (assembly == null)
-            {
-                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-                {
-                    if (asm.IsDynamic || string.IsNullOrWhiteSpace(asm.Location)) continue;
-                    visited.Add(asm.FullName);
-                    yield return asm;
-                }
-                yield break;
-            }
-            stack.Push(assembly);
-            while (stack.Count > 0)
-            {
-                var asm = stack.Pop();
-                if (!visited.Add(asm.FullName)) continue;
-                yield return asm;
-
-                foreach (var reference in asm.GetReferencedAssemblies())
-                {
-                    try
-                    {
-                        stack.Push(Assembly.Load(reference));
-                    }
-                    catch { }
-                }
-            }
+            
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
                 if (asm.IsDynamic || string.IsNullOrWhiteSpace(asm.Location)) continue;
-                if (!visited.Contains(asm.FullName))
+                visited.Add(asm.FullName);
+                yield return asm;
+            }
+            
+            // Also scan post-load list (assemblies loaded after JigSawDotNet initialization)
+            // Take a snapshot to avoid enumeration issues
+            List<Assembly>? snapshot = null;
+            if (_postLoadAssemblies != null)
+            {
+                lock (_postLoadAssemblies)
                 {
-                    visited.Add(asm.FullName);
-                    yield return asm;
+                    snapshot = _postLoadAssemblies.ToList();
                 }
             }
+            
+            if (snapshot != null)
+            {
+                foreach (var asm in snapshot)
+                {
+                    if (asm.IsDynamic || string.IsNullOrWhiteSpace(asm.Location)) continue;
+                    if (visited.Add(asm.FullName))
+                    {
+                        yield return asm;
+                    }
+                }
+            }
+        }
+        
+        private static readonly List<Assembly> _postLoadAssemblies = [];
+        
+        static Assembler()
+        {
+            // Capture assemblies loaded after this assembly is loaded (plugins, runtime loading, etc.)
+            AppDomain.CurrentDomain.AssemblyLoad += (sender, args) =>
+            {
+                lock (_postLoadAssemblies)
+                {
+                    _postLoadAssemblies.Add(args.LoadedAssembly);
+                }
+            };
         }
         private static List<MethodInfo>? ExternalPuzzlePeices;
         private static List<MethodInfo> ApplyExternalPuzzlePeices(IEnumerable<MethodInfo> puzzlePeices, IEnumerable<MethodInfo> puzzlePlaces, IEnumerable<MethodInfo> puzzleCornerPeices, Dictionary<string, string> mapping)
