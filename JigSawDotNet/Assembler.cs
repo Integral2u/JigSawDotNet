@@ -420,12 +420,13 @@ il.Emit(OpCodes.Ldarg_0);               // load 'this'
         
         private static IEnumerable<Assembly> GetAllReferencedAssemblies()
         {
-            // Scan AppDomain for already loaded assemblies
+            // Scan AppDomain for already loaded assemblies (filter system/test)
             var visited = new HashSet<string>();
             
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
                 if (asm.IsDynamic || string.IsNullOrWhiteSpace(asm.Location)) continue;
+                if (IsSystemOrTestAssembly(asm)) continue;
                 visited.Add(asm.FullName);
                 yield return asm;
             }
@@ -446,12 +447,25 @@ il.Emit(OpCodes.Ldarg_0);               // load 'this'
                 foreach (var asm in snapshot)
                 {
                     if (asm.IsDynamic || string.IsNullOrWhiteSpace(asm.Location)) continue;
+                    if (IsSystemOrTestAssembly(asm)) continue;
                     if (visited.Add(asm.FullName))
                     {
                         yield return asm;
                     }
                 }
             }
+        }
+        
+        private static bool IsSystemOrTestAssembly(Assembly asm)
+        {
+            var name = asm.GetName().Name ?? "";
+            // Skip System.*, Microsoft.*, mscorlib
+            if (name.StartsWith("System.") || name.StartsWith("Microsoft.") || name == "mscorlib")
+                return true;
+            // Skip test platform assemblies
+            if (name.Contains("TestPlatform") || name.Contains("CodeCoverage") || name.Contains("xunit"))
+                return true;
+            return false;
         }
         
         private static readonly List<Assembly> _postLoadAssemblies = [];
