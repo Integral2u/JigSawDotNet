@@ -427,7 +427,7 @@ il.Emit(OpCodes.Ldarg_0);               // load 'this'
             {
                 if (asm.IsDynamic || string.IsNullOrWhiteSpace(asm.Location)) continue;
                 if (IsSystemOrTestAssembly(asm)) continue;
-                visited.Add(asm.FullName);
+                if(!string.IsNullOrWhiteSpace(asm.FullName)) visited.Add(asm.FullName);
                 yield return asm;
             }
             
@@ -438,7 +438,7 @@ il.Emit(OpCodes.Ldarg_0);               // load 'this'
             {
                 lock (_postLoadAssemblies)
                 {
-                    snapshot = _postLoadAssemblies.ToList();
+                    snapshot = [.. _postLoadAssemblies];
                 }
             }
             
@@ -448,7 +448,7 @@ il.Emit(OpCodes.Ldarg_0);               // load 'this'
                 {
                     if (asm.IsDynamic || string.IsNullOrWhiteSpace(asm.Location)) continue;
                     if (IsSystemOrTestAssembly(asm)) continue;
-                    if (visited.Add(asm.FullName))
+                    if (!string.IsNullOrWhiteSpace(asm.FullName) && visited.Add(asm.FullName))
                     {
                         yield return asm;
                     }
