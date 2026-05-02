@@ -8,6 +8,8 @@ Optionally, JigSaw can profile every candidate implementation on the executing h
 [![NuGet](https://img.shields.io/nuget/v/JigSawDotNet.svg)](https://www.nuget.org/packages/JigSawDotNet)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/JigSawDotNet.svg)](https://www.nuget.org/packages/JigSawDotNet)
 ![GitHub Sponsor](https://img.shields.io/github/sponsors/Integral2u?label=Sponsor&logo=GitHub)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Last commit](https://img.shields.io/github/last-commit/Integral2u/SQLZero)](https://github.com/Integral2u/JigSawDotNet/commits/main)
 
 ---
 
