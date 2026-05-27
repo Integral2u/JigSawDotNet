@@ -10,8 +10,9 @@
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <RepositoryUrl>https://github.com/Integral2u/JigSawDotNet</RepositoryUrl>
     <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
-    <AssemblyVersion>1.0.8.0</AssemblyVersion>
-    <Version>1.0.8</Version>
+    <AssemblyVersion>1.0.9.0</AssemblyVersion>
+    <Version>1.0.9</Version>
+    <FileVersion>1.0.9.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>

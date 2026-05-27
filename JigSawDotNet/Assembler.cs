@@ -173,7 +173,7 @@ namespace JigSawDotNet
                         new CustomAttributeBuilder(attr.Constructor, ctorArgs));
                 }
             }
-static void DefineConstructor(TypeBuilder typeBuilder, Type baseType, Type[] constructorArgTypes)
+            static void DefineConstructor(TypeBuilder typeBuilder, Type baseType, Type[] constructorArgTypes)
             {
                 // Console.Error.WriteLine($"[JigSaw] DefineConstructor({baseType.Name})");
                 
@@ -273,8 +273,9 @@ il.Emit(OpCodes.Ldarg_0);               // load 'this'
                 buildList.Add((place, peice));
             }
             // Define the new class extending BaseClass
-            AssemblyName assemblyName = classType.Assembly.GetName();
+            AssemblyName assemblyName = new AssemblyName($"{classType.Assembly.GetName().Name}.{Guid.NewGuid():N}");
             AssemblyBuilder assemblyBuilder = AssemblyBuilder.DefineDynamicAssembly(assemblyName, AssemblyBuilderAccess.Run);
+
             // Grant access to private/internal members of the originating assembly
             assemblyBuilder.SetCustomAttribute(new CustomAttributeBuilder(
                 typeof(IgnoresAccessChecksToAttribute).GetConstructor([typeof(string)])!,
@@ -283,6 +284,7 @@ il.Emit(OpCodes.Ldarg_0);               // load 'this'
             ModuleBuilder moduleBuilder = assemblyBuilder.DefineDynamicModule("MainModule");
             var typeName = $"{classType.Name}{mapping.GetHashCode()}";
             TypeBuilder typeBuilder = moduleBuilder.DefineType(typeName, TypeAttributes.Sealed | TypeAttributes.Public, typeof(T));
+            
             var constructors = classType.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
             if (constructors.Length == 0) DefineConstructor(typeBuilder, classType, []);
             foreach (var constructor in constructors)
@@ -297,6 +299,11 @@ il.Emit(OpCodes.Ldarg_0);               // load 'this'
                     MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.HideBySig | MethodAttributes.ReuseSlot,
                     Destination.ReturnType,
                     parameterTypes);
+                
+                // Add DebuggerNonUserCode attribute to prevent debugging issues
+                var debugAttrCtor = typeof(System.Diagnostics.DebuggerNonUserCodeAttribute).GetConstructor([])!;
+                methodBuilder.SetCustomAttribute(new CustomAttributeBuilder(debugAttrCtor, []));
+
                 if (Source.IsStatic)
                 {
                     EmitForwardingIL(methodBuilder, Source, parameterTypes);
@@ -869,13 +876,24 @@ il.Emit(OpCodes.Ldarg_0);               // load 'this'
                     $"destination has {destinationParamTypes.Length} parameter(s) but " +
                     $"'{staticTarget.DeclaringType?.Name}.{staticTarget.Name}' has {targetParams.Length}. " +
                     "The external static method must have the same parameter list as the PuzzlePlace.");
+            
+            for (int i = 0; i < targetParams.Length; i++)
+            {
+                if (targetParams[i].ParameterType != destinationParamTypes[i])
+                    throw new InvalidOperationException(
+                        $"PuzzleCornerPiece forwarding type mismatch at parameter {i}: " +
+                        $"destination expects '{destinationParamTypes[i].Name}' but " +
+                        $"'{staticTarget.DeclaringType?.Name}.{staticTarget.Name}' expects '{targetParams[i].ParameterType.Name}'.");
+            }
 
             var il = destination.GetILGenerator();
 
             // ldarg_0 = 'this' in the instance override — skip it.
             // ldarg_1..N map to the real parameters.
             for (int i = 0; i < destinationParamTypes.Length; i++)
+            {
                 il.Emit(OpCodes.Ldarg, i + 1);
+            }
 
             il.Emit(OpCodes.Call, staticTarget); // direct static call; JIT will inline
             il.Emit(OpCodes.Ret);
@@ -899,28 +917,6 @@ il.Emit(OpCodes.Ldarg_0);               // load 'this'
                 var (op, opcodeSize) = ReadOpCode(rawIL, offset);
                 offset += opcodeSize;
 
-                if (IsBranch(op))
-                {
-                    int targetLabel = op.OperandType == OperandType.ShortInlineBrTarget
-                        ? offset + 1 + (sbyte)rawIL[offset]
-                        : offset + 4 + BitConverter.ToInt32(rawIL, offset);
-
-                    if (!labels.ContainsKey(targetLabel))
-                        labels[targetLabel] = il.DefineLabel();
-                }
-
-                offset += OperandSize(op);
-            }
-
-            // Second pass — emit
-            offset = 0;
-            while (offset < rawIL.Length)
-            {
-                if (labels.TryGetValue(offset, out var label))
-                    il.MarkLabel(label);
-
-                var (op, opcodeSize) = ReadOpCode(rawIL, offset);
-                offset += opcodeSize;
 
                 switch (op.OperandType)
                 {
