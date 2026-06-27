@@ -917,6 +917,27 @@ il.Emit(OpCodes.Ldarg_0);               // load 'this'
                 var (op, opcodeSize) = ReadOpCode(rawIL, offset);
                 offset += opcodeSize;
 
+                if (IsBranch(op))
+                {
+                    int targetLabel = op.OperandType == OperandType.ShortInlineBrTarget
+                        ? offset + 1 + (sbyte)rawIL[offset]
+                        : offset + 4 + BitConverter.ToInt32(rawIL, offset);
+
+                    if (!labels.ContainsKey(targetLabel))
+                        labels[targetLabel] = il.DefineLabel();
+                }
+
+                offset += OperandSize(op);
+            }
+            // Second pass — emit
+            offset = 0;
+            while (offset < rawIL.Length)
+            {
+                if (labels.TryGetValue(offset, out var label))
+                    il.MarkLabel(label);
+
+                var (op, opcodeSize) = ReadOpCode(rawIL, offset);
+                offset += opcodeSize;
 
                 switch (op.OperandType)
                 {
