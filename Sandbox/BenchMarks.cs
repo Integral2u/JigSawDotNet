@@ -17,7 +17,7 @@ namespace Sandbox
     //[MemoryDiagnoser]
     public class BenchMarks
     {
-        [Params(5000)]
+        [Params(1000)]
         public int N;
         public TestClass TestClassA;
         public TestClass TestClassB;
