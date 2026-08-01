@@ -51,15 +51,15 @@ JigSaw approach (paid once at startup):
 
 Measured on N=1000 with BenchmarkDotNet:
 
-| Method             | Mean     | Notes                                      |
-|--------------------|----------|--------------------------------------------|
-| MethodAViaDelegate | 1.348 µs | Indirect call + null check every iteration |
-| MethodAViaSwitch   | 1.223 µs | Branch predicted but still present         |
-| MethodAJigSaw      | 1.249 µs | Direct IL copy, no dispatch overhead       |
-| MethodADirect      | 1.229 µs | Baseline — calling the method directly     |
-| MethodCJigSaw      | 1.307 µs | System-selected best implementation        |
-
-`MethodAJigSaw` lands on par with `MethodADirect` — the JIT sees identical code.
+| Method             | Mean       | Notes                                      |
+|--------------------|------------|--------------------------------------------|
+| MethodAViaDelegate | 1,349.4 ns | Indirect call + null check every iteration |
+| MethodAViaSwitch   | 1,064.2 ns | Branch predicted but still present         |
+| MethodAJigSaw      |   990.8 ns | Direct IL copy, no dispatch overhead       |
+| MethodADirect      | 1,152.4 ns | Baseline — calling the method directly     |
+| MethodBDirect      | 1,347.8 ns | Baseline — calling the method directly     |
+| MethodAJigSaw      | 1,150.4 ns | Direct IL copy, no dispatch overhead       |
+| MethodCJigSaw      |   988.9 ns | System-selected best implementation        |
 
 ---
 

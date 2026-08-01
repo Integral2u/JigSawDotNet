@@ -1,13 +1,13 @@
 ﻿/*
-| Method             | N    | Mean     | Error     | StdDev    | Median   |
-|------------------- |----- |---------:|----------:|----------:|---------:|
-| MethodAViaDelegate | 1000 | 1.348 us | 0.0159 us | 0.0141 us | 1.351 us |
-| MethodAViaSwitch   | 1000 | 1.223 us | 0.0524 us | 0.1546 us | 1.300 us |
-| MethodAJigSaw      | 1000 | 1.249 us | 0.0480 us | 0.1376 us | 1.309 us |
-| MethodADirect      | 1000 | 1.229 us | 0.0516 us | 0.1522 us | 1.309 us |
-| MethodBDirect      | 1000 | 1.623 us | 0.0554 us | 0.1626 us | 1.696 us |
-| MethodBJigSaw      | 1000 | 1.380 us | 0.0271 us | 0.0371 us | 1.379 us |
-| MethodCJigSaw      | 1000 | 1.307 us | 0.0209 us | 0.0186 us | 1.308 us |
+| Method             | N    | Mean       | Error    | StdDev    | Median     |
+|------------------- |----- |-----------:|---------:|----------:|-----------:|
+| MethodAViaDelegate | 1000 | 1,349.4 ns | 16.72 ns |  15.64 ns | 1,347.7 ns |
+| MethodAViaSwitch   | 1000 | 1,064.2 ns | 48.64 ns | 142.66 ns |   993.8 ns |
+| MethodAJigSaw      | 1000 |   990.8 ns | 17.54 ns |  27.81 ns |   989.9 ns |
+| MethodADirect      | 1000 | 1,152.4 ns | 63.49 ns | 187.20 ns | 1,025.4 ns |
+| MethodBDirect      | 1000 | 1,347.8 ns | 23.62 ns |  20.94 ns | 1,345.2 ns |
+| MethodBJigSaw      | 1000 | 1,150.4 ns | 59.78 ns | 176.25 ns | 1,127.9 ns |
+| MethodCJigSaw      | 1000 |   988.9 ns | 19.53 ns |  22.49 ns |   985.4 ns |
 */
 using BenchmarkDotNet.Attributes;
 using System.Reflection;
