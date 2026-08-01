@@ -1,4 +1,5 @@
-﻿using System.Diagnostics;
+﻿using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Reflection.Emit;
@@ -67,13 +68,22 @@ namespace JigSawDotNet
                 if (!value)
                 {
                     AssemblableMappings.Clear();
+                    _typeMetadataCache.Clear();
                     referencedAssemblies = null;
                     ExternalPuzzlePeices = null;
                 }
                 _cache = value;
             }
         }
-        private static readonly Dictionary<string, Type> AssemblableMappings = [];
+        private static readonly ConcurrentDictionary<string, Type> AssemblableMappings = new();
+        
+        // Caching for parsed metadata
+        private record TypePuzzleMetadata(
+            List<MethodInfo> PuzzlePlaces,
+            List<MethodInfo> PuzzleCornerPlaces,
+            List<MethodInfo> PuzzlePeices);
+        private static readonly ConcurrentDictionary<Type, TypePuzzleMetadata> _typeMetadataCache = new();
+        private static readonly object _assemblyLock = new();
 
         public static Type Assemble<T>(Dictionary<string, string> mapping)
         {
@@ -268,14 +278,18 @@ il.Emit(OpCodes.Ldarg_0);               // load 'this'
             var fullName = $"{classType.FullName}{mapping.GetHashCode()}";
             if (Cache && AssemblableMappings.TryGetValue(fullName, out var assembled)) return assembled;
 
-            var puzzlePlaces = classType.GetMethods().Where(m => m.GetCustomAttributes(typeof(PuzzlePlace), true).Length != 0);
-            var puzzleCornerPlaces = classType.GetMethods().Where(m => m.GetCustomAttributes(typeof(PuzzleCornerPiece), true).Length != 0);
+            var metadata = _typeMetadataCache.GetOrAdd(classType, t => new TypePuzzleMetadata(
+                t.GetMethods().Where(m => m.GetCustomAttributes(typeof(PuzzlePlace), true).Length != 0).ToList(),
+                t.GetMethods().Where(m => m.GetCustomAttributes(typeof(PuzzleCornerPiece), true).Length != 0).ToList(),
+                t.GetMethods().Where(m => m.GetCustomAttributes(typeof(PuzzlePeice), true).Length != 0).ToList()
+            ));
 
-            if (!puzzlePlaces.Any() && !puzzleCornerPlaces.Any()) return classType;
+            var puzzlePlaces = metadata.PuzzlePlaces;
+            var puzzleCornerPlaces = metadata.PuzzleCornerPlaces;
 
-            var puzzlePeices = classType.GetMethods().Where(m => m.GetCustomAttributes(typeof(PuzzlePeice), true).Length != 0);
-            //Add external puzzle peices for places that have AllowStaticExternal = true
-            puzzlePeices = ApplyExternalPuzzlePeices(puzzlePeices, puzzlePlaces, puzzleCornerPlaces, mapping);
+            if (puzzlePlaces.Count == 0 && puzzleCornerPlaces.Count == 0) return classType;
+
+            var puzzlePeices = ApplyExternalPuzzlePeices(metadata.PuzzlePeices, puzzlePlaces, puzzleCornerPlaces, mapping);
 
             var buildList = new List<(MethodInfo Destination, MethodInfo Source)>();
             foreach (var place in puzzlePlaces)
