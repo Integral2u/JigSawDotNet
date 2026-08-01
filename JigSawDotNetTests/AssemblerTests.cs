@@ -430,14 +430,16 @@ namespace JigSawDotNet.Tests
         }
 
         [Fact]
-        public void CreateInstance_SupportsNamedTuple()
+        public void RestrictAssemblies_LimitsScan()
         {
-            var ops = Assembler.CreateInstance<NamedTupleOps>(
-                new Dictionary<string, string> { ["Mode"] = "Sum" });
+            // Restrict to only the current assembly (which contains no external puzzle pieces)
+            Assembler.RestrictToOnlyAssembly(typeof(AssemblerTests).Assembly);
             
-            var result = ops.NamedTupleOp(5, 10);
-            Assert.Equal(10, result.X);
-            Assert.Equal(20, result.Y);
+            // This should fail because it won't find the external piece in JigSawDotNetExternalTests
+            Assert.Throws<InvalidOperationException>(() =>
+                Assembler.CreateInstance<InternalExternalTestOp>(new Dictionary<string, string> { ["InternalExternal"] = "External" }));
+            
+            Assembler.UnRestrictAssemblies();
         }
 
         [Fact]

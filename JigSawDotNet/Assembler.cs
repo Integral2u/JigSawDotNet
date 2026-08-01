@@ -84,6 +84,13 @@ namespace JigSawDotNet
             List<MethodInfo> PuzzlePeices);
         private static readonly ConcurrentDictionary<Type, TypePuzzleMetadata> _typeMetadataCache = new();
         private static readonly object _assemblyLock = new();
+        private static readonly HashSet<Assembly> _restrictedAssemblies = new();
+
+        public static void RestrictToAssembly(Assembly asm) { lock(_assemblyLock) _restrictedAssemblies.Add(asm); }
+        public static void RestrictToOnlyAssembly(Assembly asm) { lock(_assemblyLock) { _restrictedAssemblies.Clear(); _restrictedAssemblies.Add(asm); } }
+        public static void RestrictToAssemblies(params Assembly[] assemblies) { lock(_assemblyLock) foreach(var a in assemblies) _restrictedAssemblies.Add(a); }
+        public static void RestrictToOnlyAssemblies(params Assembly[] assemblies) { lock(_assemblyLock) { _restrictedAssemblies.Clear(); foreach(var a in assemblies) _restrictedAssemblies.Add(a); } }
+        public static void UnRestrictAssemblies() { lock(_assemblyLock) _restrictedAssemblies.Clear(); }
 
         public static Type Assemble<T>(Dictionary<string, string> mapping)
         {
@@ -279,9 +286,9 @@ il.Emit(OpCodes.Ldarg_0);               // load 'this'
             if (Cache && AssemblableMappings.TryGetValue(fullName, out var assembled)) return assembled;
 
             var metadata = _typeMetadataCache.GetOrAdd(classType, t => new TypePuzzleMetadata(
-                t.GetMethods().Where(m => m.GetCustomAttributes(typeof(PuzzlePlace), true).Length != 0).ToList(),
-                t.GetMethods().Where(m => m.GetCustomAttributes(typeof(PuzzleCornerPiece), true).Length != 0).ToList(),
-                t.GetMethods().Where(m => m.GetCustomAttributes(typeof(PuzzlePeice), true).Length != 0).ToList()
+                [.. t.GetMethods().Where(m => m.GetCustomAttributes(typeof(PuzzlePlace), true).Length != 0)],
+                [.. t.GetMethods().Where(m => m.GetCustomAttributes(typeof(PuzzleCornerPiece), true).Length != 0)],
+                [.. t.GetMethods().Where(m => m.GetCustomAttributes(typeof(PuzzlePeice), true).Length != 0)]
             ));
 
             var puzzlePlaces = metadata.PuzzlePlaces;
@@ -313,7 +320,7 @@ il.Emit(OpCodes.Ldarg_0);               // load 'this'
                 buildList.Add((place, peice));
             }
             // Define the new class extending BaseClass
-            AssemblyName assemblyName = new AssemblyName($"{classType.Assembly.GetName().Name}.{Guid.NewGuid():N}");
+            AssemblyName assemblyName = new($"{classType.Assembly.GetName().Name}.{Guid.NewGuid():N}");
             AssemblyBuilder assemblyBuilder = AssemblyBuilder.DefineDynamicAssembly(assemblyName, AssemblyBuilderAccess.Run);
 
             // Grant access to private/internal members of the originating assembly
@@ -364,8 +371,8 @@ il.Emit(OpCodes.Ldarg_0);               // load 'this'
         }
 
 
-
-        private static MethodInfo GetPuzzleCornerPeiceFor(MethodInfo place, Dictionary<string, string> mapping)
+        private static MethodInfo GetPuzzleCornerPeiceFor(MethodInfo place, Dictionary<string, string> mapping) => GetPuzzleCornerPeiceFor(place, mapping, ReferencedAssemblies);
+        private static MethodInfo GetPuzzleCornerPeiceFor(MethodInfo place, Dictionary<string, string> mapping, IEnumerable<Assembly> assemblies)
         {
             if (place.DeclaringType == null)
                 throw new InvalidOperationException($"Method {place.Name} DeclaringType is null.");
@@ -379,7 +386,7 @@ il.Emit(OpCodes.Ldarg_0);               // load 'this'
             // External scan — only when opted in
             if (allowExternal)
             {
-                foreach (var type in ReferencedAssemblies
+                foreach (var type in assemblies
                              .Where(a => !a.IsDynamic)
                              .SelectMany(a => { try { return a.GetTypes(); } catch { return []; } })
                              .Where(t => t.IsClass && (!t.IsAbstract || t.IsSealed)))
@@ -463,7 +470,16 @@ il.Emit(OpCodes.Ldarg_0);               // load 'this'
             return null;
         }
         private static IEnumerable<Assembly>? referencedAssemblies = null;
-        private static IEnumerable<Assembly> ReferencedAssemblies => referencedAssemblies ??= GetAllReferencedAssemblies();
+        private static IEnumerable<Assembly> ReferencedAssemblies 
+        {
+            get {
+                lock(_assemblyLock)
+                {
+                    if (_restrictedAssemblies.Count > 0) return _restrictedAssemblies.ToList();
+                    return referencedAssemblies ??= GetAllReferencedAssemblies().ToList();
+                }
+            }
+        }
         
         private static IEnumerable<Assembly> GetAllReferencedAssemblies()
         {
@@ -529,7 +545,8 @@ il.Emit(OpCodes.Ldarg_0);               // load 'this'
             };
         }
         private static List<MethodInfo>? ExternalPuzzlePeices;
-        private static List<MethodInfo> ApplyExternalPuzzlePeices(IEnumerable<MethodInfo> puzzlePeices, IEnumerable<MethodInfo> puzzlePlaces, IEnumerable<MethodInfo> puzzleCornerPeices, Dictionary<string, string> mapping)
+        private static List<MethodInfo> ApplyExternalPuzzlePeices(IEnumerable<MethodInfo> puzzlePeices, IEnumerable<MethodInfo> puzzlePlaces, IEnumerable<MethodInfo> puzzleCornerPeices, Dictionary<string, string> mapping) => ApplyExternalPuzzlePeices(puzzlePeices, puzzlePlaces, puzzleCornerPeices, mapping, ReferencedAssemblies);
+        private static List<MethodInfo> ApplyExternalPuzzlePeices(IEnumerable<MethodInfo> puzzlePeices, IEnumerable<MethodInfo> puzzlePlaces, IEnumerable<MethodInfo> puzzleCornerPeices, Dictionary<string, string> mapping, IEnumerable<Assembly> assemblies)
         {
             var localPieces = puzzlePeices.ToList();
             var mappingKeyValues = mapping.Select(kv => $"{kv.Key}|{kv.Value}").ToHashSet();
@@ -568,7 +585,7 @@ il.Emit(OpCodes.Ldarg_0);               // load 'this'
             if (places.Count == 0)
                 return localPieces;
             var classes = new List<Type>();
-            foreach (var assembly in ReferencedAssemblies)
+            foreach (var assembly in assemblies)
             {
                 if (assembly.IsDynamic) continue;
                 try
