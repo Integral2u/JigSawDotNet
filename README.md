@@ -504,7 +504,30 @@ bool Assembler.Cache { get; set; }
 
 ---
 
+
+### Optimizing Assembly Scanning
+By default, `JigSawDotNet` scans the entire `AppDomain` for `PuzzlePeice` attributes. In large applications, this can negatively impact performance. You can optimize this by restricting the scope of the scan to only the assemblies that contain your puzzle pieces.
+
+#### Assembly Restriction API
+Use these methods to configure which assemblies the `Assembler` should scan:
+
+*   **`RestrictToAssembly(Assembly asm)`**: Adds the specified assembly to the set of assemblies scanned for puzzle pieces.
+*   **`RestrictToOnlyAssembly(Assembly asm)`**: Clears all existing restrictions and restricts scanning to *only* the specified assembly.
+*   **`RestrictToAssemblies(params Assembly[] assemblies)`**: Adds the specified assemblies to the set of assemblies scanned for puzzle pieces.
+*   **`RestrictToOnlyAssemblies(params Assembly[] assemblies)`**: Clears all existing restrictions and restricts scanning to *only* the specified assemblies.
+*   **`UnRestrictAssemblies()`**: Clears all restrictions, causing the `Assembler` to revert to scanning the entire `AppDomain` (default behavior).
+
+#### Example Usage
+```csharp
+// Optimize startup by restricting scanning to only your core assembly
+Assembler.RestrictToOnlyAssembly(typeof(MyApplication.CoreModule).Assembly);
+
+// If you need to include a specific plugin assembly later:
+Assembler.RestrictToAssembly(typeof(MyApplication.PluginA).Assembly);
+
+---
+
 ## Requirements
 
-- .NET 8 or later
+- .NET 10 or later
 - No external dependencies
