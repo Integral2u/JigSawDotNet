@@ -156,6 +156,23 @@ namespace JigSawDotNet.Tests
         public static bool AlwaysTrue(bool _) => true;
         public static bool Verify(MethodInfo _) => true;
     }
+    public abstract class TupleOps
+    {
+        [PuzzlePlace("TupleOp")]
+        public abstract (int, string) TupleOp(int i, string s);
+
+        [PuzzlePeice("TupleOp", "Mode", "PassThrough")]
+        public (int, string) PassThrough(int i, string s) => (i, s);
+    }
+
+    public abstract class NamedTupleOps
+    {
+        [PuzzlePlace("NamedTupleOp")]
+        public abstract (int X, int Y) NamedTupleOp(int x, int y);
+
+        [PuzzlePeice("NamedTupleOp", "Mode", "Sum")]
+        public (int X, int Y) Sum(int x, int y) => (x + x, y + y);
+    }
     // -------------------------------------------------------------------------
     // Tests
     // -------------------------------------------------------------------------
@@ -399,6 +416,28 @@ namespace JigSawDotNet.Tests
 
             Assert.Equal(99, direct.Reveal());
             Assert.Equal(198, doubled.Reveal());
+        }
+
+        [Fact]
+        public void CreateInstance_SupportsTuple()
+        {
+            var ops = Assembler.CreateInstance<TupleOps>(
+                new Dictionary<string, string> { ["Mode"] = "PassThrough" });
+            
+            var result = ops.TupleOp(1, "test");
+            Assert.Equal(1, result.Item1);
+            Assert.Equal("test", result.Item2);
+        }
+
+        [Fact]
+        public void CreateInstance_SupportsNamedTuple()
+        {
+            var ops = Assembler.CreateInstance<NamedTupleOps>(
+                new Dictionary<string, string> { ["Mode"] = "Sum" });
+            
+            var result = ops.NamedTupleOp(5, 10);
+            Assert.Equal(10, result.X);
+            Assert.Equal(20, result.Y);
         }
 
         [Fact]

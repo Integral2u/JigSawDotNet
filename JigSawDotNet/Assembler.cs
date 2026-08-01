@@ -101,9 +101,17 @@ namespace JigSawDotNet
                 {
                     if (attr.AttributeType == typeof(PuzzlePeice)) continue;
                     if (attr.AttributeType == typeof(PuzzlePlace)) continue;
-                    var ctorArgs = attr.ConstructorArguments
-                                        .Select(a => a.Value)
-                                        .ToArray();
+                    
+                    var ctorArgs = attr.ConstructorArguments.Select(a => {
+                        if (a.Value is System.Collections.ObjectModel.ReadOnlyCollection<CustomAttributeTypedArgument> collection)
+                        {
+                            var type = a.ArgumentType.GetElementType()!;
+                            var array = Array.CreateInstance(type, collection.Count);
+                            for (int i = 0; i < collection.Count; i++) array.SetValue(collection[i].Value, i);
+                            return array;
+                        }
+                        return a.Value;
+                    }).ToArray();
 
                     var namedProps = attr.NamedArguments
                                          .Where(a => !a.IsField)
@@ -146,7 +154,16 @@ namespace JigSawDotNet
 
                     foreach (var attr in sourceParams[i].GetCustomAttributesData())
                     {
-                        var ctorArgs = attr.ConstructorArguments.Select(a => a.Value).ToArray();
+                        var ctorArgs = attr.ConstructorArguments.Select(a => {
+                            if (a.Value is System.Collections.ObjectModel.ReadOnlyCollection<CustomAttributeTypedArgument> collection)
+                            {
+                                var type = a.ArgumentType.GetElementType()!;
+                                var array = Array.CreateInstance(type, collection.Count);
+                                for (int j = 0; j < collection.Count; j++) array.SetValue(collection[j].Value, j);
+                                return array;
+                            }
+                            return a.Value;
+                        }).ToArray();
                         var namedProps = attr.NamedArguments.Where(a => !a.IsField)
                                              .Select(a => (PropertyInfo)a.MemberInfo).ToArray();
                         var propValues = attr.NamedArguments.Where(a => !a.IsField)
@@ -168,7 +185,16 @@ namespace JigSawDotNet
                 var returnBuilder = target.DefineParameter(0, ParameterAttributes.Retval, null);
                 foreach (var attr in source.ReturnParameter.GetCustomAttributesData())
                 {
-                    var ctorArgs = attr.ConstructorArguments.Select(a => a.Value).ToArray();
+                    var ctorArgs = attr.ConstructorArguments.Select(a => {
+                        if (a.Value is System.Collections.ObjectModel.ReadOnlyCollection<CustomAttributeTypedArgument> collection)
+                        {
+                            var type = a.ArgumentType.GetElementType()!;
+                            var array = Array.CreateInstance(type, collection.Count);
+                            for (int i = 0; i < collection.Count; i++) array.SetValue(collection[i].Value, i);
+                            return array;
+                        }
+                        return a.Value;
+                    }).ToArray();
                     returnBuilder.SetCustomAttribute(
                         new CustomAttributeBuilder(attr.Constructor, ctorArgs));
                 }
